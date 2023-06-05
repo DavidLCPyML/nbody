@@ -5,7 +5,7 @@ pub struct Vertex {
     color: [f32; 3],
 }
 
-pub const BLUE:[f32; 3] = [0.06, 0.06, 0.8];
+pub const BLUE:[f32; 3] = [0.722, 0.22, 0.231];
 
 pub const _RED: [f32; 3] = [0.44, 0.0,  0.22];
 
