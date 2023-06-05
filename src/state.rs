@@ -8,7 +8,6 @@ use winit::event::*;
 
 mod camera;
 mod instance;
-mod texture;
 mod vertex;
 
 pub struct State {
@@ -22,7 +21,6 @@ pub struct State {
   index_buffer: wgpu::Buffer,
   num_indices: u32,
   window: Window,
-  diffuse_bind_group: wgpu::BindGroup,
   camera: camera::Camera,
   camera_uniform: camera::CameraUniform,
   camera_buffer: wgpu::Buffer,
@@ -30,7 +28,6 @@ pub struct State {
   camera_controller: camera::CameraController,
   instances: Vec<instance::Instance>,
   instance_buffer: wgpu::Buffer,
-  depth_texture: texture::Texture,
   projection: camera::Projection,
   pub mouse_pressed: bool,
 }
@@ -91,48 +88,6 @@ impl State {
       };
       surface.configure(&device, &config);
 
-      let diffuse_bytes = include_bytes!("../assets/star.png");
-      let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
-      let diffuse_texture =
-          texture::Texture::from_bytes(&device, &queue, diffuse_bytes, "../assets/star.png")
-              .unwrap();
-      let texture_bind_group_layout =
-          device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-              entries: &[
-                  wgpu::BindGroupLayoutEntry {
-                      binding: 0,
-                      visibility: wgpu::ShaderStages::FRAGMENT,
-                      ty: wgpu::BindingType::Texture {
-                          multisampled: false,
-                          view_dimension: wgpu::TextureViewDimension::D2,
-                          sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                      },
-                      count: None,
-                  },
-                  wgpu::BindGroupLayoutEntry {
-                      binding: 1,
-                      visibility: wgpu::ShaderStages::FRAGMENT,
-                      ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                      count: None,
-                  },
-              ],
-              label: Some("texture_bind_group_layout"),
-          });
-      let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-          layout: &texture_bind_group_layout,
-          entries: &[
-              wgpu::BindGroupEntry {
-                  binding: 0,
-                  resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-              },
-              wgpu::BindGroupEntry {
-                  binding: 1,
-                  resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-              },
-          ],
-          label: Some("diffuse_bind_group"),
-      });
-
       let instances = (0..instance::NUM_INSTANCES_PER_ROW).flat_map(|z| {
           (0..instance::NUM_INSTANCES_PER_ROW).map(move |x| {
               let position = cgmath::Vector3 {x: x as f32, y: 0.0, z: z as f32} - instance::INSTANCE_DISPLACEMENT;
@@ -158,7 +113,6 @@ impl State {
 
       let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
       let projection = camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
-      let camera_controller = camera::CameraController::new(4.0, 0.4);
       let mut camera_uniform = camera::CameraUniform::new();
       camera_uniform.update_view_proj(&camera, &projection);
 
@@ -203,7 +157,7 @@ impl State {
       let render_pipeline_layout =
           device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
               label: Some("Render Pipeline Layout"),
-              bind_group_layouts: &[&texture_bind_group_layout, &camera_bind_group_layout],
+              bind_group_layouts: &[&camera_bind_group_layout],
               push_constant_ranges: &[],
           });
 
@@ -236,13 +190,7 @@ impl State {
               unclipped_depth: false,
               conservative: false,
           },
-          depth_stencil: Some(wgpu::DepthStencilState{
-              format:texture::Texture::DEPTH_FORMAT,
-              depth_write_enabled: true,
-              depth_compare: wgpu::CompareFunction::Less,
-              stencil: wgpu::StencilState::default(),
-              bias: wgpu::DepthBiasState::default(),
-          }),
+          depth_stencil: None,
           multisample: wgpu::MultisampleState {
               count: 1,
               mask: !0,
@@ -274,7 +222,6 @@ impl State {
           index_buffer,
           num_indices,
           window,
-          diffuse_bind_group,
           camera,
           camera_uniform,
           camera_buffer,
@@ -282,7 +229,6 @@ impl State {
           camera_controller,
           instances,
           instance_buffer,
-          depth_texture,
           projection,
           mouse_pressed: false,
       }
@@ -299,7 +245,6 @@ impl State {
           self.config.height = new_size.height;
           self.surface.configure(&self.device, &self.config);
           self.projection.resize(new_size.width, new_size.height);
-          self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
       }
   }
 
@@ -364,19 +309,11 @@ impl State {
                       store: true,
                   },
               })],
-              depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                  view: &self.depth_texture.view,
-                  depth_ops:Some(wgpu::Operations{
-                      load: wgpu::LoadOp::Clear(1.0),
-                      store: true,
-                  }),
-                  stencil_ops: None,
-              }),
+              depth_stencil_attachment: None,
           });
 
           render_pass.set_pipeline(&self.render_pipeline);
-          render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-          render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+          render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
           render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
           render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
           render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

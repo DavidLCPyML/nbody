@@ -84,11 +84,8 @@ pub async fn run() {
             state.update(dt);
             match state.render() {
                 Ok(_) => {}
-                // Reconfigure the surface if it's lost or outdated
                 Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => state.resize(state.size),
-                // The system is out of memory, we should probably quit
                 Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                // We're ignoring timeouts
                 Err(wgpu::SurfaceError::Timeout) => log::warn!("Surface timeout"),
             }
         }
