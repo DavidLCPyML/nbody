@@ -29,13 +29,13 @@ impl Vertex {
 
 pub const VERTICES: &[Vertex] = &[
     Vertex {
-        position: [0.25, 0.0, 0.0],
+        position: [0.025, 0.0, 0.0],
     }, // A
     Vertex {
-        position: [0.0, 0.25, 0.0],
+        position: [0.0, 0.025, 0.0],
     }, // B
     Vertex {
-        position: [0.0, -0.25, 0.0],
+        position: [0.0, -0.025, 0.0],
     }, // C
 ];
 pub const INDICES: &[u16] = &[0, 1, 2, /* padding */ 0];
