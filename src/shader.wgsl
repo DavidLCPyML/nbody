@@ -41,7 +41,11 @@ fn vs_main(
     return out;
 }
 
+
+const BLUE: vec4<f32> = vec4<f32>(0.0, 0.0, 0.635, 1.0);
+const RED: vec4<f32> = vec4<f32>(0.635, 0.0, 0.0, 1.0);
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(0.0, 0.0, 0.635, 1.0);
+    return RED;
 }
