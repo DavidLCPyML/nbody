@@ -15,6 +15,7 @@ cgmath = "0.18"
 instant = "0.1"
 bytemuck = { version = "1.12", features = [ "derive" ] }
 tobj = { version = "3.2", features = ["async"]}
+rand = "0.8.4"
 
 [dependencies.image]
 version = "0.24"
