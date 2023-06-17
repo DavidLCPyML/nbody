@@ -1,5 +1,5 @@
 use nbody::run;
-mod gen;
+use nbody::gen;
 
 use cgmath::{
     Point3,
@@ -34,7 +34,6 @@ fn main() {
     let default: gen::Galaxies = defaults();
     let particles = default.new();
 
-    // pollster::block_on(run(particles));
-    pollster::block_on(run());
+    pollster::block_on(run(particles));
 }
 

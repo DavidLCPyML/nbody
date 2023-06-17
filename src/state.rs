@@ -9,6 +9,7 @@ use winit::window::Window;
 mod camera;
 mod instance;
 mod vertex;
+pub mod gen;
 
 pub struct State {
     surface: wgpu::Surface,
@@ -16,18 +17,18 @@ pub struct State {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
-    render_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    num_indices: u32,
+    // render_pipeline: wgpu::RenderPipeline,
+    // vertex_buffer: wgpu::Buffer,
+    // index_buffer: wgpu::Buffer,
+    // num_indices: u32,
     window: Window,
     camera: camera::Camera,
     camera_uniform: camera::CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     camera_controller: camera::CameraController,
-    instances: Vec<instance::Instance>,
-    instance_buffer: wgpu::Buffer,
+    // instances: Vec<instance::Instance>,
+    // instance_buffer: wgpu::Buffer,
     projection: camera::Projection,
     pub mouse_pressed: bool,
 }
@@ -36,7 +37,7 @@ impl State {
     pub fn get_camera_controller(&mut self) -> &mut camera::CameraController {
         &mut self.camera_controller
     }
-    pub async fn new(window: Window) -> Self {
+    pub async fn new(window: Window, particles: Vec<gen::Particle>) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -44,7 +45,6 @@ impl State {
         });
 
         let surface = unsafe { instance.create_surface(&window) }.unwrap();
-
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -70,6 +70,26 @@ impl State {
             .await
             .unwrap();
 
+            let particle_size = (particles.len() * std::mem::size_of::<gen::Particle>()) as u64;
+
+            let old_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                size: particle_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST,
+            });
+
+            // Create buffer for the current state of the particles
+            let current_buffer_initializer = device
+                .create_buffer_mapped(particles.len(), wgpu::BufferUsages::COPY_SRC)
+                .fill_from_slice(&particles);
+
+            let current_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                size: particle_size,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            });
+
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats
@@ -87,37 +107,6 @@ impl State {
             view_formats: vec![],
         };
         surface.configure(&device, &config);
-
-        let instances = (0..instance::NUM_INSTANCES_PER_ROW)
-            .flat_map(|z| {
-                (0..instance::NUM_INSTANCES_PER_ROW).map(move |x| {
-                    let position = cgmath::Vector3 {
-                        x: x as f32,
-                        y: 0.0,
-                        z: z as f32,
-                    } - instance::INSTANCE_DISPLACEMENT;
-                    let rotation = if position.is_zero() {
-                        cgmath::Quaternion::from_axis_angle(
-                            cgmath::Vector3::unit_z(),
-                            cgmath::Deg(0.0),
-                        )
-                    } else {
-                        cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                    };
-                    instance::Instance { position, rotation }
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let instance_data = instances
-            .iter()
-            .map(instance::Instance::to_raw)
-            .collect::<Vec<_>>();
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instance_data),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
 
         let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
         let projection =
@@ -155,6 +144,7 @@ impl State {
             label: Some("camera_bind_group"),
         });
         let camera_controller = camera::CameraController::new(1.0, 0.4);
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -205,17 +195,6 @@ impl State {
             multiview: None,
         });
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(vertex::VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: bytemuck::cast_slice(vertex::INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let num_indices = vertex::INDICES.len() as u32;
 
         Self {
             surface,
@@ -223,18 +202,18 @@ impl State {
             queue,
             config,
             size,
-            render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            num_indices,
+            // render_pipeline,
+            // vertex_buffer,
+            // index_buffer,
+            // num_indices,
             window,
             camera,
             camera_uniform,
             camera_buffer,
             camera_bind_group,
             camera_controller,
-            instances,
-            instance_buffer,
+            // instances,
+            // instance_buffer,
             projection,
             mouse_pressed: false,
         }
@@ -323,12 +302,8 @@ impl State {
                 depth_stencil_attachment: None,
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..self.instances.len() as _);
+            // render_pass.set_pipeline(&self.render_pipeline);
+            // render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
         }
 
         self.queue.submit(iter::once(encoder.finish()));

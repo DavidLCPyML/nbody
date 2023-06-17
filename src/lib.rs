@@ -3,14 +3,16 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
+use wgpu::*;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 mod state;
+use state::gen::Particle;
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
-pub async fn run() {
+pub async fn run(particles: Vec<Particle>) {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "wasm32")] {
             std::panic::set_hook(Box::new(console_error_panic_hook::hook));
@@ -20,8 +22,10 @@ pub async fn run() {
         }
     }
 
+
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
+    let _ = window.set_cursor_grab(winit::window::CursorGrabMode::Confined);
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -40,7 +44,7 @@ pub async fn run() {
             .expect("Couldn't append canvas to document body.");
     }
 
-    let mut state = state::State::new(window).await;
+    let mut state = state::State::new(window, particles).await;
     let mut last_render_time = instant::Instant::now();
 
     event_loop.run(move |event, _, control_flow| match event {
