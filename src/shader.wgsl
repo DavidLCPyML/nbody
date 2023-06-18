@@ -49,3 +49,63 @@ const RED: vec4<f32> = vec4<f32>(0.635, 0.0, 0.0, 1.0);
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return RED;
 }
+
+
+const G: f32 = 6.67408E-11;
+const PARTICLES_PER_GROUP: i32 = 256; // REMEMBER TO CHANGE MAIN.RS
+
+struct GlobalsBuffer {
+    num_particles: i32,
+    safety: f32,
+    delta: f32,
+};
+
+struct Particle {
+    p: vec3<f64>,
+    v: vec3<f64>,
+    mass: f64,
+    density: f64,
+}
+
+struct DataOld {
+    data_old: array<Particle>,
+};
+
+struct DataCurrent {
+    data: array<Particle>,
+};
+
+fn length2(v: vec3<f64>) -> f32 {
+    return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
+@compute
+fn cs_main(@builtin(global_invocation_id) globalInvocationID: vec3<u32>) {
+    // Get index of current particle
+    var i = globalInvocationID.x;
+
+    // Early return
+    if(data_old[i].mass < 0) { 
+        return;
+    }
+
+    // Gravity
+    if(delta > 0.0) {
+        var temp = dvec3(0.0, 0.0, 0.0);
+
+        // Go through all other particles...
+        for(var j = 0; j < particles; j++) {
+            // Skip self
+            if(j == i) { continue; }
+
+            if(data_old[j].mass == 0) { break; }
+
+            var diff = data_old[j].pos - data_old[i].pos;
+            temp += normalize(diff) * data_old[j].mass / (length2(diff)+safety);
+        }
+
+        // Update data
+        data[i].vel += vec3(temp * G * delta);
+        data[i].pos += data[i].vel * delta;
+    }
+}

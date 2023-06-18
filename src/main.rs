@@ -1,5 +1,5 @@
 use nbody::run;
-use nbody::gen;
+pub use nbody::state::gen;
 
 use cgmath::{
     Point3,

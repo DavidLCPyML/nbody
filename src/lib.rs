@@ -8,7 +8,7 @@ use wgpu::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-mod state;
+pub mod state;
 use state::gen::Particle;
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
@@ -46,7 +46,6 @@ pub async fn run(particles: Vec<Particle>) {
 
     let mut state = state::State::new(window, particles).await;
     let mut last_render_time = instant::Instant::now();
-
     event_loop.run(move |event, _, control_flow| match event {
         Event::MainEventsCleared => state.window().request_redraw(),
         Event::DeviceEvent {
@@ -92,6 +91,7 @@ pub async fn run(particles: Vec<Particle>) {
                 Err(wgpu::SurfaceError::Timeout) => log::warn!("Surface timeout"),
             }
         }
+        Event::MainEventsCleared =>{ state.window().request_redraw();}
         _ => {}
     });
 }
