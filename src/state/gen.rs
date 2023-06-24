@@ -8,11 +8,23 @@ use rand::prelude::*;
 const G: f64 = 6.67408E-11;
 const ARMS: u32 = 4;
 
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
 pub struct Particle {
   pos: Point3<f64>,
   velocity: Vector3<f64>,
   pub mass: f64,
   pub density: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct Globals {
+    camera_pos: Point3<f32>, // 1, 2, 3
+    particles: u32, // 4
+    safety: f64, // 5, 6
+    delta: f32, // 7
+    _p: f32, // 8
 }
 
 impl Particle {

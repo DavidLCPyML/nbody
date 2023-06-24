@@ -34,6 +34,14 @@ fn main() {
     let default: gen::Galaxies = defaults();
     let particles = default.new();
 
-    pollster::block_on(run(particles));
+    let globals = gen::Globals {
+        camera_pos: config.camera_pos.into(),
+        particles: particles.len() as u32,
+        safety: config.safety,
+        delta: 0.0,
+        _p: 0.0,
+    };
+
+    pollster::block_on(run(globals, particles));
 }
 

@@ -3,7 +3,6 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
-use wgpu::*;
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -12,7 +11,7 @@ pub mod state;
 use state::gen::Particle;
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen(start))]
-pub async fn run(particles: Vec<Particle>) {
+pub async fn run(globals: state::gen::Globals, particles: Vec<Particle>) {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "wasm32")] {
             std::panic::set_hook(Box::new(console_error_panic_hook::hook));
@@ -44,7 +43,7 @@ pub async fn run(particles: Vec<Particle>) {
             .expect("Couldn't append canvas to document body.");
     }
 
-    let mut state = state::State::new(window, particles).await;
+    let mut state = state::State::new(window, particles, globals).await;
     let mut last_render_time = instant::Instant::now();
     event_loop.run(move |event, _, control_flow| match event {
         Event::MainEventsCleared => state.window().request_redraw(),
@@ -84,7 +83,7 @@ pub async fn run(particles: Vec<Particle>) {
             let dt = now - last_render_time;
             last_render_time = now;
             state.update(dt);
-            match state.render() {
+            match state.render(globals) {
                 Ok(_) => {}
                 Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => state.resize(state.size),
                 Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
