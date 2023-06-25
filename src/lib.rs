@@ -90,7 +90,6 @@ pub async fn run(globals: state::gen::Globals, particles: Vec<Particle>) {
                 Err(wgpu::SurfaceError::Timeout) => log::warn!("Surface timeout"),
             }
         }
-        Event::MainEventsCleared =>{ state.window().request_redraw();}
         _ => {}
     });
 }

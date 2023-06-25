@@ -41,7 +41,7 @@ impl State {
     pub fn get_camera_controller(&mut self) -> &mut camera::CameraController {
         &mut self.camera_controller
     }
-    pub async fn new(window: Window, particles: Vec<gen::Particle>, globals: gen::Globals) -> Self {
+    pub async fn new(window: Window, particles: Vec<gen::Particle>, mut globals: gen::Globals) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -214,16 +214,26 @@ impl State {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
+
         let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Globals Buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            contents: bytemuck::cast_slice(&[globals.into()]),
+            contents: bytemuck::cast_slice(&[globals]),
         });
+
+        fn demo<T, const N: usize>(v: Vec<T>) -> [T; N] {
+            v.try_into()
+                .unwrap_or_else(|v: Vec<T>| panic!("Expected a Vec of length {} but it was {}", N, v.len()))
+        }
+
+        let particles: &[u8] = demo(particles).try_into().unwrap();
         let init = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Init Buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            contents: bytemuck::cast_slice(&[particles.into()]),
+            contents: bytemuck::cast_slice::<u8>(&[particles.try_into().unwrap()]),
         });
+
+        let particles: Vec<gen::Particle> = particles.into();
 
         let mut compiler = shaderc::Compiler::new().unwrap();
         let cs = compiler
@@ -235,10 +245,12 @@ impl State {
                 None,
             )
             .unwrap();
-        let cs_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compute shader"),
-            source: wgpu::util::make_spirv(cs.as_binary_u8()),
-        });
+        let cs_mod = unsafe {
+            device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+                label: Some("compute shader spirv"),
+                source: make_spirv_raw(cs.as_binary_u8()),
+            })
+        };
         let fs = include_bytes!("shader.frag.spv");
         let vs = include_bytes!("shader.vert.spv");
 
