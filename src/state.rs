@@ -221,21 +221,21 @@ impl State {
             contents: bytemuck::cast_slice(&[globals]),
         });
 
-        fn demo<T, const N: usize>(v: Vec<T>) -> [T; N] {
-            v.try_into()
-                .unwrap_or_else(|v: Vec<T>| panic!("Expected a Vec of length {} but it was {}", N, v.len()))
+        unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+            ::core::slice::from_raw_parts(
+                (p as *const T) as *const u8,
+                ::core::mem::size_of::<T>(),
+            )
         }
-
-        let particles: &[u8] = demo(particles).try_into().unwrap();
         let init = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Init Buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            contents: bytemuck::cast_slice::<u8>(&[particles.try_into().unwrap()]),
+            contents: unsafe {
+                any_as_u8_slice(&[particles.clone()])
+            }
         });
 
-        let particles: Vec<gen::Particle> = particles.into();
-
-        let mut compiler = shaderc::Compiler::new().unwrap();
+        let compiler = shaderc::Compiler::new().unwrap();
         let cs = compiler
             .compile_into_spirv(
                 "shader.comp",
@@ -289,13 +289,13 @@ impl State {
             label: Some("Render Pipeline"),
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
+                module: &vs_mod,
+                entry_point: "main",
                 buffers: &[vertex::Vertex::desc(), instance::InstanceRaw::desc()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
+                module: &fs_mod,
+                entry_point: "main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState {
@@ -402,7 +402,7 @@ impl State {
         );
     }
 
-    pub fn render(&mut self, mut globals: gen::Globals) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, globals: gen::Globals) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture

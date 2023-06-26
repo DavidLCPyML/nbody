@@ -1,6 +1,6 @@
 use cgmath::{
     prelude::*,
-    {Point3, Vector3},
+    {Vector3},
 };
 use std::f32::consts::PI;
 use rand::prelude::*;
@@ -11,24 +11,40 @@ const ARMS: u32 = 4;
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct Particle {
-  pos: Point3<f64>,
-  velocity: Vector3<f64>,
+  pos: [f64; 3],
+  velocity: [f64; 3],
   pub mass: f64,
   pub density: f64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Globals {
-    camera_pos: Point3<f32>, // 1, 2, 3
+    camera_x: f32, // 1
+    camera_y: f32, // 2
+    camera_z: f32, // 3
     particles: u32, // 4
     safety: f64, // 5, 6
     delta: f32, // 7
     _p: f32, // 8
 }
 
+impl Default for Globals {
+  fn default() -> Self {
+    Globals {
+      camera_x: 0.0,
+      camera_y: 0.0,
+      camera_z: 1.0,
+      particles: 0,
+      safety: 1.0,
+      delta: 0.0001,
+      _p: 0.0001,
+    }
+  }
+}
+
 impl Particle {
-    pub fn new(pos: Point3<f64>, velocity: Vector3<f64>, mass: f64, density: f64) -> Self {
+    pub fn new(pos: [f64; 3], velocity: [f64; 3], mass: f64, density: f64) -> Self {
         Self {
             pos,
             velocity,
@@ -40,18 +56,18 @@ impl Particle {
 
 pub enum Galaxy {
   Particle {
-    pos: Point3<f64>,
-    velocity: Vector3<f64>,
+    pos: [f64; 3],
+    velocity: [f64; 3],
     mass: f64,
     density: f64,
   },
   Structures {
     num_particles: u32,
-    center_pos: Point3<f64>,
+    center_pos: [f64; 3],
     center_mass: f64,
-    center_velocity: Vector3<f64>,
+    center_velocity: [f64; 3],
     center_density: f64,
-    normal: Vector3<f64>,
+    normal: [f64; 3],
   }
 }
 
@@ -93,9 +109,9 @@ impl Galaxies {
         create_galaxy(
           &mut particles,
           *num_particles,
-          *center_pos,
+          (*center_pos).into(),
           *center_mass,
-          *center_velocity,
+          (*center_velocity).into(),
           *center_density,
           *normal,
         );
@@ -108,12 +124,14 @@ impl Galaxies {
 pub fn create_galaxy(
     particles: &mut Vec<Particle>,
     num_particles: u32,
-    center_pos: Point3<f64>,
+    center_pos: Vector3<f64>,
     center_mass: f64,
     center_velocity: Vector3<f64>,
-    center_density: f64,
-    mut normal: Vector3<f64>,
+    _center_density: f64,
+    normal: [f64; 3],
 ) {
+  let mut normal: Vector3<f64> = normal.try_into().unwrap();
+
   normal = normal.normalize();
   let tangent: Vector3<f64> = normal.cross(Vector3::new(normal.y, -normal.x, normal.z));
   let bitangent = normal.cross(tangent);
@@ -128,6 +146,8 @@ pub fn create_galaxy(
     let speed = (G * center_mass / radius).sqrt();
     let fly_dir = dir.cross(normal); // check if necessary
     let velocity = center_velocity + fly_dir * speed;
+    let pos: [f64; 3] = pos.try_into().unwrap();
+    let velocity: [f64; 3] = velocity.try_into().unwrap();
     particles.push(Particle::new(pos, velocity, mass, density));
   }
 
@@ -140,6 +160,9 @@ pub fn create_galaxy(
     let speed = (G * center_mass / radius).sqrt();
     let fly_dir = dir.cross(normal); // check if necessary
     let velocity = center_velocity + fly_dir * speed;
+    let dir: [f64; 3] = dir.try_into().unwrap();
+    let pos: [f64; 3] = pos.try_into().unwrap();
+    let velocity: [f64; 3] = velocity.try_into().unwrap();
     particles.push(Particle::new(pos, velocity, mass, density));
   }
 }
