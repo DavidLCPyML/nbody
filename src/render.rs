@@ -1,15 +1,17 @@
 //! This module handles everything that has to do with the window. That includes opening a window,
 //! parsing events and rendering. See shader.comp for the physics simulation algorithm.
 
+use wgpu::{util::DeviceExt, Adapter};
+
+
 use {
     crate::{Globals, Particle},
     cgmath::{prelude::*, Matrix4, PerspectiveFov, Point3, Quaternion, Rad, Vector3},
-    std::{collections::HashSet, f32::consts::PI, io::Cursor, time::Instant},
+    std::{collections::HashSet, f32::consts::PI, time::Instant},
     winit::{
         event,
         event_loop::{ControlFlow, EventLoop},
     },
-    wgpu::{Adapter, },
 };
 
 const TICKS_PER_FRAME: u32 = 3; // Number of simulation steps per redraw
@@ -87,12 +89,12 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     println!("{:?}", adapter.get_info());
 
     // Request access to that GPU
-    let (device, mut queue) = futures::executor::block_on(
+    let (device, queue) = futures::executor::block_on(
         adapter
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
-                features: wgpu::Features::empty(),
+                features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH | wgpu::Features::VERTEX_WRITABLE_STORAGE,
                 limits: if cfg!(target_arch = "wasm32") {
                     wgpu::Limits::downlevel_webgl2_defaults()
                 } else {
@@ -129,60 +131,64 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     };
 
     // Create globals buffer to give global information to the shader
-    let globals_buffer = device
-        .create_buffer_mapped(1, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST)
-        .fill_from_slice(&[globals]);
+    let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Globals Buffer"),
+        contents: bytemuck::cast_slice(&[globals]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+    });
 
     // Create buffer for the previous state of the particles
     let old_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         size: particles_size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::MAP_READ
-            | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
         label: Some("Old Buffer"),
         mapped_at_creation: false,
     });
-
+    let particles_json: String = serde_json::to_string(&particles).unwrap();
+    let particles_bytes: &[u8] = particles_json.as_bytes();
     // Create buffer for the current state of the particles
-    let current_buffer_initializer = device
-        .create_buffer_mapped(particles.len(), wgpu::BufferUsages::COPY_SRC)
-        .fill_from_slice(&particles);
+    let current_buffer_initializer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Current Buffer Initializer"),
+        contents: particles_bytes,        
+        usage: wgpu::BufferUsages::COPY_SRC,
+    });
 
     let current_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         size: particles_size,
-        usage: wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
         label: Some("Current Buffer"),
         mapped_at_creation: false,
     });
 
-    // Create swap chain to render images to
-    let mut swap_chain_descriptor = wgpu::SwapChainDescriptor {
-        usage: wgpu::TextureUsages::OUTPUT_ATTACHMENT,
+    let surface_caps = surface.get_capabilities(&adapter);
+
+    let mut config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: wgpu::TextureFormat::Bgra8UnormSrgb,
         width: size.width,
         height: size.height,
-        present_mode: wgpu::PresentMode::Vsync,
+        present_mode: wgpu::PresentMode::Immediate,
+        alpha_mode: surface_caps.alpha_modes[0],
+        view_formats: vec![],
     };
-
-    let mut swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
 
     // Texture to keep track of which particle is in front (for the camera)
     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Depth Texture"),
         size: wgpu::Extent3d {
-            width: swap_chain_descriptor.width,
-            height: swap_chain_descriptor.height,
-            depth: 1,
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
         },
-        array_layer_count: 1,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::OUTPUT_ATTACHMENT | wgpu::TextureUsages::SAMPLED,
+        view_formats: &[],
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
     });
-    let mut depth_view = depth_texture.create_default_view();
+    let mut depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     // Describe the buffers that will be available to the GPU
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -192,16 +198,22 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                count: None,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },                count: None,
             },
             // Old Particle data
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType {
-                    dynamic: false,
-                    readonly: true,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<Particle>() as _,
+                    ),
                 },
                 count: None,
 
@@ -210,9 +222,12 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::StorageBuffer {
-                    dynamic: false,
-                    readonly: false,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<Particle>() as _,
+                    ),
                 },
                 count: None,
 
@@ -298,7 +313,22 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             unclipped_depth: false,
             conservative: false,
         },
-        depth_stencil: None,
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            bias: wgpu::DepthBiasState {
+                constant: 0,
+                slope_scale: 0.0,
+                clamp: 0.0,
+              },
+            depth_compare: wgpu::CompareFunction::LessEqual,
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState::IGNORE,
+                back: wgpu::StencilFaceState::IGNORE,
+                read_mask: 0,
+                write_mask: 0,
+              },
+        }),        
         multisample: wgpu::MultisampleState {
             count: 1,
             mask: !0,
@@ -308,13 +338,18 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     });
 
     // Where is the camera looking at?
-    let mut camera_dir = -globals.camera_pos.to_vec();
+
+    let mut camera_dir: Vector3<f32> = Vector3::new(
+        -globals.camera_pos[0],
+        -globals.camera_pos[1],
+        -globals.camera_pos[2],
+    );
     camera_dir = camera_dir.normalize();
     globals.matrix = build_matrix(
-        globals.camera_pos,
+        globals.camera_pos.into(),
         camera_dir,
         size.width as f32 / size.height as f32,
-    );
+    ).into();
 
     // Speed of the camera
     let mut fly_speed = 1E10;
@@ -331,7 +366,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     // Initial setup
     {
         let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Command Encoder") });
 
         // Initialize current particle buffer
         encoder.copy_buffer_to_buffer(
@@ -342,7 +377,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             particles_size,
         );
 
-        queue.submit(&[encoder.finish()]);
+        queue.submit([encoder.finish()]);
     }
 
     // Start main loop
@@ -455,25 +490,26 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                     size = new_size;
 
                     // Reset swap chain, it's outdated
-                    swap_chain_descriptor.width = new_size.width;
-                    swap_chain_descriptor.height = new_size.height;
-                    swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
+                    config.width = new_size.width;
+                    config.height = new_size.height;
+                    surface.configure(&device, &config);
 
                     // Reset depth texture
                     let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("Depth Texture new"),
                         size: wgpu::Extent3d {
-                            width: swap_chain_descriptor.width,
-                            height: swap_chain_descriptor.height,
-                            depth: 1,
+                            width: config.width,
+                            height: config.height,
+                            depth_or_array_layers: 1,
                         },
-                        array_layer_count: 1,
+                        view_formats: &[],
                         mip_level_count: 1,
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Depth32Float,
-                        usage: wgpu::TextureUsages::OUTPUT_ATTACHMENT,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     });
-                    depth_view = depth_texture.create_default_view();
+                    depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
                 }
                 _ => {}
             },
@@ -484,51 +520,62 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                 let dt = delta.as_secs_f32();
                 last_tick = Instant::now();
 
-                let frame = swap_chain.get_next_texture();
+                let frame = surface.get_current_texture();
+                let surface_texture = frame.ok().expect("Couldn't find frame texture!");
+                let view = surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
                 let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Command Encoder"),});
 
                 camera_dir.normalize();
                 right = camera_dir.cross(Vector3::new(0.0, 1.0, 0.0));
                 right = right.normalize();
 
+                let mut tmp: Point3<f32> = Point3::new(
+                    globals.camera_pos[0],
+                    globals.camera_pos[1],
+                    globals.camera_pos[2],
+                );
+
                 if pressed_keys.contains(&event::VirtualKeyCode::A) {
-                    globals.camera_pos += -right * fly_speed * dt;
+                    tmp += -right * fly_speed * dt;
                 }
 
                 if pressed_keys.contains(&event::VirtualKeyCode::D) {
-                    globals.camera_pos += right * fly_speed * dt;
+                    tmp += right * fly_speed * dt;
                 }
 
                 if pressed_keys.contains(&event::VirtualKeyCode::W) {
-                    globals.camera_pos += camera_dir * fly_speed * dt;
+                    tmp += camera_dir * fly_speed * dt;
                 }
 
                 if pressed_keys.contains(&event::VirtualKeyCode::S) {
-                    globals.camera_pos += -camera_dir * fly_speed * dt;
+                    tmp += -camera_dir * fly_speed * dt;
                 }
 
                 if pressed_keys.contains(&event::VirtualKeyCode::Space) {
-                    globals.camera_pos.y -= fly_speed * dt;
+                    tmp[1] -= fly_speed * dt;
                 }
 
                 if pressed_keys.contains(&event::VirtualKeyCode::LShift) {
-                    globals.camera_pos.y += fly_speed * dt;
+                    tmp[1] += fly_speed * dt;
                 }
 
                 globals.matrix = build_matrix(
-                    globals.camera_pos,
+                    tmp.into(),
                     camera_dir,
                     size.width as f32 / size.height as f32,
-                );
+                ).into();
+                globals.camera_pos = [tmp[0], tmp[1], tmp[2]];
 
                 // Create new globals buffer
-                let new_globals_buffer = device
-                    .create_buffer_mapped(
-                        1,
-                        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
-                    )
-                    .fill_from_slice(&[globals]);
+                let new_globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Globals Buffer"),
+                    contents: bytemuck::cast_slice(&[globals]),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                });
 
                 // Upload the new globals buffer to the GPU
                 encoder.copy_buffer_to_buffer(
@@ -548,45 +595,55 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                         0,
                         particles_size,
                     );
-                    let mut cpass = encoder.begin_compute_pass();
-                    cpass.set_pipeline(&compute_pipeline);
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("Compute pass"),
+                    });                    cpass.set_pipeline(&compute_pipeline);
                     cpass.set_bind_group(0, &bind_group, &[]);
-                    cpass.dispatch(work_group_count, 1, 1);
+                    cpass.dispatch_workgroups(work_group_count, 1, 1);
                 }
 
                 {
                     // Render the current state
                     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                            attachment: &frame.view,
+                        label: Some("Render Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
                             resolve_target: None,
-                            load_op: wgpu::LoadOp::Clear,
-                            store_op: wgpu::StoreOp::Store,
-                            clear_color: wgpu::Color {
-                                r: 0.03,
-                                g: 0.03,
-                                b: 0.03,
-                                a: 1.0,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.03,
+                                    g: 0.03,
+                                    b: 0.03,
+                                    a: 1.0,
+                                }),
+                                store: true,
                             },
-                        }],
+                        })],
                         depth_stencil_attachment: Some(
-                            wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                                attachment: &depth_view,
-                                depth_load_op: wgpu::LoadOp::Clear,
-                                depth_store_op: wgpu::StoreOp::Store,
-                                clear_depth: 1.0,
-                                stencil_load_op: wgpu::LoadOp::Clear,
-                                stencil_store_op: wgpu::StoreOp::Store,
-                                clear_stencil: 0,
+                            wgpu::RenderPassDepthStencilAttachment {
+                                view: &depth_view,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(1.0),
+                                    store: true,
+                                }),
+                                stencil_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(0),
+                                    store: true,
+                                })
                             },
                         ),
                     });
+
                     rpass.set_pipeline(&render_pipeline);
                     rpass.set_bind_group(0, &bind_group, &[]);
                     rpass.draw(0..particles.len() as u32, 0..1);
                 }
+                drop(view);
 
-                queue.submit(&[encoder.finish()]);
+                queue.submit([encoder.finish()]);
+                surface_texture.present();
+                surface.configure(&device, &config);
+                // drop(surface_texture);
             }
 
             // No more events in queue

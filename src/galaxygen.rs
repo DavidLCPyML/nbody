@@ -53,7 +53,7 @@ pub fn generate_galaxy(
             .sqrt() as f32;
         let vel = center_vel + fly_direction * speed;
 
-        particles.push(Particle::new(pos, vel, mass, density));
+        particles.push(Particle::new(pos.into(), vel.into(), mass, density));
     }
 
     // Generate spiral arms of the galaxy
@@ -88,6 +88,6 @@ pub fn generate_galaxy(
             .sqrt() as f32;
         let vel = center_vel + fly_direction * speed;
 
-        particles.push(Particle::new(pos, vel, mass, density));
+        particles.push(Particle::new(pos.into(), vel.into(), mass, density));
     }
 }

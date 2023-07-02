@@ -213,6 +213,20 @@ name = "bytemuck"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17febce684fd15d89027105661fec94afb475cb995fbc59d2865198446ba2eea"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdde5c9cd29ebd706ce1b35600920a33550e402fc998a2e53ad3b42c3c47a192"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.22",
+]
 
 [[package]]
 name = "calloop"
@@ -668,6 +682,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "itoa"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "453ad9f582a441959e5f0d088b02ce04cfe8d51a8eaf077f12ac6d3e94164ca6"
+
+[[package]]
 name = "jni-sys"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -867,6 +887,7 @@ dependencies = [
 name = "nbodysim"
 version = "1.0.0"
 dependencies = [
+ "bytemuck",
  "cgmath",
  "futures",
  "glsl-to-spirv",
@@ -875,6 +896,7 @@ dependencies = [
  "raw-window-handle",
  "ron",
  "serde",
+ "serde_json",
  "wgpu",
  "winit",
 ]
@@ -1279,6 +1301,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
+name = "ryu"
+version = "1.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f91339c0467de62360649f8d3e185ca8de4224ff281f66000de5eb2a77a79041"
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1321,6 +1349,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.74",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.99"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46266871c240a00b8f503b877622fe33430b3c7d963bdc0f2adc511e54a1eae3"
+dependencies = [
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
