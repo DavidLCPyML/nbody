@@ -1,0 +1,572 @@
+3a4,6
+> use wgpu::{util::DeviceExt, Adapter};
+> 
+> 
+7c10
+<     std::{collections::HashSet, f32::consts::PI, io::Cursor, time::Instant},
+---
+>     std::{collections::HashSet, f32::consts::PI, time::Instant},
+33a37,41
+>     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+>         backends: wgpu::Backends::all(),
+>         dx12_shader_compiler: Default::default(),
+>     });
+> 
+40c48
+<         let surface = wgpu::Surface::create(&window);
+---
+>         let surface = unsafe { instance.create_surface(&window) }.unwrap();
+65c73
+<     let _ = window.set_cursor_grab(true);
+---
+>     let _ = window.set_cursor_grab(winit::window::CursorGrabMode::Confined);
+73,77c81,88
+<     let adapter = wgpu::Adapter::request(&wgpu::RequestAdapterOptions {
+<         power_preference: wgpu::PowerPreference::HighPerformance,
+<         backends: wgpu::BackendBit::PRIMARY,
+<     })
+<     .unwrap();
+---
+>     let adapter = instance
+>         .request_adapter(&wgpu::RequestAdapterOptions {
+>             power_preference: wgpu::PowerPreference::HighPerformance,
+>             compatible_surface: Some(&surface),
+>             force_fallback_adapter: false,
+>         });
+>     let adapter: Adapter = futures::executor::block_on(adapter).unwrap();
+>     
+81,87c92,105
+<     let (device, mut queue) = adapter.request_device(&wgpu::DeviceDescriptor {
+<         extensions: wgpu::Extensions {
+<             anisotropic_filtering: false,
+<         },
+<         limits: wgpu::Limits::default(),
+<     });
+< 
+---
+>     let (device, queue) = futures::executor::block_on(
+>         adapter
+>         .request_device(
+>             &wgpu::DeviceDescriptor {
+>                 label: Some("Device Descriptor"),
+>                 features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH | wgpu::Features::VERTEX_WRITABLE_STORAGE,
+>                 limits: if cfg!(target_arch = "wasm32") {
+>                     wgpu::Limits::downlevel_webgl2_defaults()
+>                 } else {
+>                     wgpu::Limits::default()
+>                 },
+>             },
+>             None,
+>         )).unwrap();
+90c108,113
+<     let cs_module = device.create_shader_module(&wgpu::read_spirv(Cursor::new(cs.iter())).unwrap());
+---
+>     let cs_module = unsafe {
+>         device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
+>             label: Some("Compute Shader"),
+>             source: wgpu::util::make_spirv_raw(cs),
+>             })
+>     };
+94c117,122
+<     let vs_module = device.create_shader_module(&wgpu::read_spirv(Cursor::new(vs.iter())).unwrap());
+---
+>     let vs_module = unsafe {
+>         device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
+>             label: Some("Vertex Shader"),
+>             source: wgpu::util::make_spirv_raw(vs),
+>             })
+>     };
+98c126,131
+<     let fs_module = device.create_shader_module(&wgpu::read_spirv(Cursor::new(fs.iter())).unwrap());
+---
+>     let fs_module = unsafe {
+>         device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
+>             label: Some("Fragment Shader"),
+>             source: wgpu::util::make_spirv_raw(fs),
+>             })
+>     };
+101,103c134,138
+<     let globals_buffer = device
+<         .create_buffer_mapped(1, wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST)
+<         .fill_from_slice(&[globals]);
+---
+>     let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+>         label: Some("Globals Buffer"),
+>         contents: bytemuck::cast_slice(&[globals]),
+>         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+>     });
+108,110c143,145
+<         usage: wgpu::BufferUsage::STORAGE
+<             | wgpu::BufferUsage::STORAGE_READ
+<             | wgpu::BufferUsage::COPY_DST,
+---
+>         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+>         label: Some("Old Buffer"),
+>         mapped_at_creation: false,
+112c147,148
+< 
+---
+>     let particles_json: String = serde_json::to_string(&particles).unwrap();
+>     let particles_bytes: &[u8] = particles_json.as_bytes();
+114,116c150,154
+<     let current_buffer_initializer = device
+<         .create_buffer_mapped(particles.len(), wgpu::BufferUsage::COPY_SRC)
+<         .fill_from_slice(&particles);
+---
+>     let current_buffer_initializer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+>         label: Some("Current Buffer Initializer"),
+>         contents: particles_bytes,        
+>         usage: wgpu::BufferUsages::COPY_SRC,
+>     });
+120,122c158,161
+<         usage: wgpu::BufferUsage::STORAGE
+<             | wgpu::BufferUsage::COPY_SRC
+<             | wgpu::BufferUsage::COPY_DST,
+---
+>         usage: wgpu::BufferUsages::COPY_SRC
+>             | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
+>         label: Some("Current Buffer"),
+>         mapped_at_creation: false,
+125,127c164,167
+<     // Create swap chain to render images to
+<     let mut swap_chain_descriptor = wgpu::SwapChainDescriptor {
+<         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+---
+>     let surface_caps = surface.get_capabilities(&adapter);
+> 
+>     let mut config = wgpu::SurfaceConfiguration {
+>         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+131c171,173
+<         present_mode: wgpu::PresentMode::Vsync,
+---
+>         present_mode: wgpu::PresentMode::Immediate,
+>         alpha_mode: surface_caps.alpha_modes[0],
+>         view_formats: vec![],
+134,135d175
+<     let mut swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
+< 
+137a178
+>         label: Some("Depth Texture"),
+139,141c180,182
+<             width: swap_chain_descriptor.width,
+<             height: swap_chain_descriptor.height,
+<             depth: 1,
+---
+>             width: config.width,
+>             height: config.height,
+>             depth_or_array_layers: 1,
+143d183
+<         array_layer_count: 1,
+148c188,189
+<         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::SAMPLED,
+---
+>         view_formats: &[],
+>         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+150c191
+<     let mut depth_view = depth_texture.create_default_view();
+---
+>     let mut depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+154c195,196
+<         bindings: &[
+---
+>         label: Some("Bind Group Layout"),
+>         entries: &[
+156c198
+<             wgpu::BindGroupLayoutBinding {
+---
+>             wgpu::BindGroupLayoutEntry {
+158,159c200,206
+<                 visibility: wgpu::ShaderStage::COMPUTE | wgpu::ShaderStage::VERTEX,
+<                 ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+---
+>                 visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+>                 ty: wgpu::BindingType::Buffer {
+>                     ty: wgpu::BufferBindingType::Uniform,
+>                     has_dynamic_offset: false,
+>                     min_binding_size: wgpu::BufferSize::new(
+>                         std::mem::size_of::<Globals>() as _,)
+>                 },                count: None,
+162c209
+<             wgpu::BindGroupLayoutBinding {
+---
+>             wgpu::BindGroupLayoutEntry {
+164,167c211,217
+<                 visibility: wgpu::ShaderStage::COMPUTE,
+<                 ty: wgpu::BindingType::StorageBuffer {
+<                     dynamic: false,
+<                     readonly: true,
+---
+>                 visibility: wgpu::ShaderStages::COMPUTE,
+>                 ty: wgpu::BindingType::Buffer {
+>                     ty: wgpu::BufferBindingType::Storage { read_only: true },
+>                     has_dynamic_offset: false,
+>                     min_binding_size: wgpu::BufferSize::new(
+>                         std::mem::size_of::<Particle>() as _,
+>                     ),
+168a219,220
+>                 count: None,
+> 
+171c223
+<             wgpu::BindGroupLayoutBinding {
+---
+>             wgpu::BindGroupLayoutEntry {
+173,176c225,231
+<                 visibility: wgpu::ShaderStage::COMPUTE | wgpu::ShaderStage::VERTEX,
+<                 ty: wgpu::BindingType::StorageBuffer {
+<                     dynamic: false,
+<                     readonly: false,
+---
+>                 visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
+>                 ty: wgpu::BindingType::Buffer {
+>                     ty: wgpu::BufferBindingType::Storage { read_only: false },
+>                     has_dynamic_offset: false,
+>                     min_binding_size: wgpu::BufferSize::new(
+>                         std::mem::size_of::<Particle>() as _,
+>                     ),
+177a233,234
+>                 count: None,
+> 
+183a241
+>         label: Some("Particle Bind Group"),
+185,187c243,244
+<         bindings: &[
+<             // Globals
+<             wgpu::Binding {
+---
+>         entries: &[
+>             wgpu::BindGroupEntry {
+189,192c246,251
+<                 resource: wgpu::BindingResource::Buffer {
+<                     buffer: &globals_buffer,
+<                     range: 0..std::mem::size_of::<Globals>() as u64,
+<                 },
+---
+>                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+>                     buffer: &old_buffer,
+>                     offset: 0,
+>                     size: Some(std::num::NonZeroU64::new(std::mem::size_of::<Globals>() as u64,
+>                 ).unwrap()),
+>                 }),
+194,195c253
+<             // Old Particle data
+<             wgpu::Binding {
+---
+>             wgpu::BindGroupEntry {
+197c255
+<                 resource: wgpu::BindingResource::Buffer {
+---
+>                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+199,200c257,259
+<                     range: 0..particles_size,
+<                 },
+---
+>                     offset: 0,
+>                     size: Some(std::num::NonZeroU64::new(particles_size).unwrap()),
+>                 }),
+202,203c261
+<             // Current Particle data
+<             wgpu::Binding {
+---
+>             wgpu::BindGroupEntry {
+205c263
+<                 resource: wgpu::BindingResource::Buffer {
+---
+>                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+207,208c265,267
+<                     range: 0..particles_size,
+<                 },
+---
+>                     offset: 0,
+>                     size: Some(std::num::NonZeroU64::new(particles_size).unwrap()),
+>                 }),
+214a274
+>         label: Some("Pipeline Layout"),
+215a276
+>         push_constant_ranges: &[],
+220,224c281,284
+<         layout: &pipeline_layout,
+<         compute_stage: wgpu::ProgrammableStageDescriptor {
+<             module: &cs_module,
+<             entry_point: "main",
+<         },
+---
+>         label: Some("Compute Pipeline"),
+>         layout: Some(&pipeline_layout),
+>         module: &cs_module,
+>         entry_point: "main",
+229,230c289,291
+<         layout: &pipeline_layout,
+<         vertex_stage: wgpu::ProgrammableStageDescriptor {
+---
+>         label: Some("Render Pipeline"),
+>         layout: Some(&pipeline_layout),
+>         vertex: wgpu::VertexState {
+232a294
+>             buffers: &[],
+234c296
+<         fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+---
+>         fragment: Some(wgpu::FragmentState {
+236a299,306
+>             targets: &[Some(wgpu::ColorTargetState {
+>                 format: config.format,
+>                 blend: Some(wgpu::BlendState {
+>                     color: wgpu::BlendComponent::REPLACE,
+>                     alpha: wgpu::BlendComponent::REPLACE,
+>                 }),
+>                 write_mask: wgpu::ColorWrites::ALL,
+>             })],
+238c308,310
+<         rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+---
+>         primitive: wgpu::PrimitiveState {
+>             topology: wgpu::PrimitiveTopology::TriangleList,
+>             strip_index_format: None,
+240,252c312,317
+<             cull_mode: wgpu::CullMode::Front,
+<             depth_bias: 2,
+<             depth_bias_slope_scale: 2.0,
+<             depth_bias_clamp: 0.0,
+<         }),
+<         primitive_topology: wgpu::PrimitiveTopology::PointList, // Draw vertices as blocky points
+<         color_states: &[wgpu::ColorStateDescriptor {
+<             format: wgpu::TextureFormat::Bgra8UnormSrgb,
+<             color_blend: wgpu::BlendDescriptor::REPLACE,
+<             alpha_blend: wgpu::BlendDescriptor::REPLACE,
+<             write_mask: wgpu::ColorWrite::ALL,
+<         }],
+<         depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+---
+>             cull_mode: None,
+>             polygon_mode: wgpu::PolygonMode::Fill,
+>             unclipped_depth: false,
+>             conservative: false,
+>         },
+>         depth_stencil: Some(wgpu::DepthStencilState {
+254a320,324
+>             bias: wgpu::DepthBiasState {
+>                 constant: 0,
+>                 slope_scale: 0.0,
+>                 clamp: 0.0,
+>               },
+256,265c326,338
+<             stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+<             stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+<             stencil_read_mask: 0,
+<             stencil_write_mask: 0,
+<         }),
+<         index_format: wgpu::IndexFormat::Uint16,
+<         vertex_buffers: &[],
+<         sample_count: 1,
+<         sample_mask: !0,
+<         alpha_to_coverage_enabled: false,
+---
+>             stencil: wgpu::StencilState {
+>                 front: wgpu::StencilFaceState::IGNORE,
+>                 back: wgpu::StencilFaceState::IGNORE,
+>                 read_mask: 0,
+>                 write_mask: 0,
+>               },
+>         }),        
+>         multisample: wgpu::MultisampleState {
+>             count: 1,
+>             mask: !0,
+>             alpha_to_coverage_enabled: false,
+>         },
+>         multiview: None,
+269c342,347
+<     let mut camera_dir = -globals.camera_pos.to_vec();
+---
+> 
+>     let mut camera_dir: Vector3<f32> = Vector3::new(
+>         -globals.camera_pos[0],
+>         -globals.camera_pos[1],
+>         -globals.camera_pos[2],
+>     );
+272c350
+<         globals.camera_pos,
+---
+>         globals.camera_pos.into(),
+275c353
+<     );
+---
+>     ).into();
+292c370
+<             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
+---
+>             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Command Encoder") });
+303c381
+<         queue.submit(&[encoder.finish()]);
+---
+>         queue.submit([encoder.finish()]);
+416,418c494,496
+<                     swap_chain_descriptor.width = new_size.width;
+<                     swap_chain_descriptor.height = new_size.height;
+<                     swap_chain = device.create_swap_chain(&surface, &swap_chain_descriptor);
+---
+>                     config.width = new_size.width;
+>                     config.height = new_size.height;
+>                     surface.configure(&device, &config);
+421a500
+>                         label: Some("Depth Texture new"),
+423,425c502,504
+<                             width: swap_chain_descriptor.width,
+<                             height: swap_chain_descriptor.height,
+<                             depth: 1,
+---
+>                             width: config.width,
+>                             height: config.height,
+>                             depth_or_array_layers: 1,
+427c506
+<                         array_layer_count: 1,
+---
+>                         view_formats: &[],
+432c511
+<                         usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+---
+>                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+434c513
+<                     depth_view = depth_texture.create_default_view();
+---
+>                     depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+445c524,528
+<                 let frame = swap_chain.get_next_texture();
+---
+>                 let frame = surface.get_current_texture();
+>                 let surface_texture = frame.ok().expect("Couldn't find frame texture!");
+>                 let view = surface_texture
+>                     .texture
+>                     .create_view(&wgpu::TextureViewDescriptor::default());
+447c530,531
+<                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor { todo: 0 });
+---
+>                     device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+>                         label: Some("Command Encoder"),});
+452a537,542
+>                 let mut tmp: Point3<f32> = Point3::new(
+>                     globals.camera_pos[0],
+>                     globals.camera_pos[1],
+>                     globals.camera_pos[2],
+>                 );
+> 
+454c544
+<                     globals.camera_pos += -right * fly_speed * dt;
+---
+>                     tmp += -right * fly_speed * dt;
+458c548
+<                     globals.camera_pos += right * fly_speed * dt;
+---
+>                     tmp += right * fly_speed * dt;
+462c552
+<                     globals.camera_pos += camera_dir * fly_speed * dt;
+---
+>                     tmp += camera_dir * fly_speed * dt;
+466c556
+<                     globals.camera_pos += -camera_dir * fly_speed * dt;
+---
+>                     tmp += -camera_dir * fly_speed * dt;
+470c560
+<                     globals.camera_pos.y -= fly_speed * dt;
+---
+>                     tmp[1] -= fly_speed * dt;
+474c564
+<                     globals.camera_pos.y += fly_speed * dt;
+---
+>                     tmp[1] += fly_speed * dt;
+478c568
+<                     globals.camera_pos,
+---
+>                     tmp.into(),
+481c571,572
+<                 );
+---
+>                 ).into();
+>                 globals.camera_pos = [tmp[0], tmp[1], tmp[2]];
+484,489c575,579
+<                 let new_globals_buffer = device
+<                     .create_buffer_mapped(
+<                         1,
+<                         wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_SRC,
+<                     )
+<                     .fill_from_slice(&[globals]);
+---
+>                 let new_globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+>                     label: Some("Globals Buffer"),
+>                     contents: bytemuck::cast_slice(&[globals]),
+>                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+>                 });
+509,510c599,601
+<                     let mut cpass = encoder.begin_compute_pass();
+<                     cpass.set_pipeline(&compute_pipeline);
+---
+>                     let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+>                         label: Some("Compute pass"),
+>                     });                    cpass.set_pipeline(&compute_pipeline);
+512c603
+<                     cpass.dispatch(work_group_count, 1, 1);
+---
+>                     cpass.dispatch_workgroups(work_group_count, 1, 1);
+518,519c609,611
+<                         color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
+<                             attachment: &frame.view,
+---
+>                         label: Some("Render Pass"),
+>                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+>                             view: &view,
+521,527c613,620
+<                             load_op: wgpu::LoadOp::Clear,
+<                             store_op: wgpu::StoreOp::Store,
+<                             clear_color: wgpu::Color {
+<                                 r: 0.03,
+<                                 g: 0.03,
+<                                 b: 0.03,
+<                                 a: 1.0,
+---
+>                             ops: wgpu::Operations {
+>                                 load: wgpu::LoadOp::Clear(wgpu::Color {
+>                                     r: 0.03,
+>                                     g: 0.03,
+>                                     b: 0.03,
+>                                     a: 1.0,
+>                                 }),
+>                                 store: true,
+529c622
+<                         }],
+---
+>                         })],
+531,538c624,633
+<                             wgpu::RenderPassDepthStencilAttachmentDescriptor {
+<                                 attachment: &depth_view,
+<                                 depth_load_op: wgpu::LoadOp::Clear,
+<                                 depth_store_op: wgpu::StoreOp::Store,
+<                                 clear_depth: 1.0,
+<                                 stencil_load_op: wgpu::LoadOp::Clear,
+<                                 stencil_store_op: wgpu::StoreOp::Store,
+<                                 clear_stencil: 0,
+---
+>                             wgpu::RenderPassDepthStencilAttachment {
+>                                 view: &depth_view,
+>                                 depth_ops: Some(wgpu::Operations {
+>                                     load: wgpu::LoadOp::Clear(1.0),
+>                                     store: true,
+>                                 }),
+>                                 stencil_ops: Some(wgpu::Operations {
+>                                     load: wgpu::LoadOp::Clear(0),
+>                                     store: true,
+>                                 })
+541a637
+> 
+545a642
+>                 drop(view);
+547c644,647
+<                 queue.submit(&[encoder.finish()]);
+---
+>                 queue.submit([encoder.finish()]);
+>                 surface_texture.present();
+>                 surface.configure(&device, &config);
+>                 // drop(surface_texture);
+557c657
+< }
+\ No newline at end of file
+---
+> }

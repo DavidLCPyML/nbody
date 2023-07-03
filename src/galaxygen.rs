@@ -75,7 +75,6 @@ pub fn generate_galaxy(
         let diff = tangent * angle.sin() + bitangent * angle.cos();
 
         let fly_direction = diff.cross(normal).normalize();
-
         let pos = center_pos + diff * radius;
 
         let mass = 0E30;

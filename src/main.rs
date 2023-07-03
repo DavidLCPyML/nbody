@@ -87,6 +87,7 @@ fn main() {
 
     // Construct particles from config
     let particles = config.construct_particles();
+    println!("Finished constructing particles.");
 
     let globals = Globals {
         matrix: Matrix4::from_translation(Vector3::new(0.0, 0.0, 0.0)).into(),
@@ -97,7 +98,8 @@ fn main() {
         _p: 0.0,
     };
 
-    render::run(globals, particles);
+    pollster::block_on(render::run(globals, particles));
+    // render::run(globals, particles);
 }
 
 /// Read configuration file

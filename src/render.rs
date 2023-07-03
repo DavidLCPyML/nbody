@@ -1,8 +1,7 @@
 //! This module handles everything that has to do with the window. That includes opening a window,
 //! parsing events and rendering. See shader.comp for the physics simulation algorithm.
 
-use wgpu::{util::DeviceExt, Adapter};
-
+use wgpu::{util::DeviceExt, Error};
 
 use {
     crate::{Globals, Particle},
@@ -11,6 +10,7 @@ use {
     winit::{
         event,
         event_loop::{ControlFlow, EventLoop},
+        window::{Window, WindowBuilder},
     },
 };
 
@@ -26,7 +26,91 @@ fn build_matrix(pos: Point3<f32>, dir: Vector3<f32>, aspect: f32) -> Matrix4<f32
     }) * Matrix4::look_to_rh(pos, dir, Vector3::new(0.0, 1.0, 0.0))
 }
 
-pub fn run(mut globals: Globals, particles: Vec<Particle>) {
+pub struct Display {
+    surface: wgpu::Surface,
+    pub window: Window,
+    pub config: wgpu::SurfaceConfiguration,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub adapter: wgpu::Adapter,
+    pub size: winit::dpi::PhysicalSize<u32>,
+}
+
+impl Display {
+    pub async fn new(window: Window) -> Result<Self, Error> {
+        let size = window.inner_size();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            dx12_shader_compiler: Default::default(),
+        });
+        let surface = unsafe { instance.create_surface(&window) }.unwrap();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .unwrap();
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH | wgpu::Features::VERTEX_WRITABLE_STORAGE | wgpu::Features::MAPPABLE_PRIMARY_BUFFERS,
+                    limits: if cfg!(target_arch = "wasm32") {
+                        wgpu::Limits::downlevel_webgl2_defaults()
+                    } else {
+                        wgpu::Limits::default()
+                    },
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let surface_caps = surface.get_capabilities(&adapter);
+        // Shader code in this tutorial assumes an Srgb surface texture. Using a different
+        // one will result all the colors comming out darker. If you want to support non
+        // Srgb surfaces, you'll need to account for that when drawing to the frame.
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(surface_caps.formats[0]);
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width,
+            height: size.height,
+            present_mode: surface_caps.present_modes[0],
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+        };
+        surface.configure(&device, &config);
+
+        Ok(Self {
+            surface,
+            window,
+            config,
+            device,
+            queue,
+            adapter,
+            size,
+        })
+    }
+
+    pub fn window(&self) -> &Window {
+        &self.window
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.config.width = width;
+        self.config.height = height;
+        self.surface.configure(&self.device, &self.config);
+    }
+}
+
+pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
     // How many bytes do the particles need
     let particles_size = (particles.len() * std::mem::size_of::<Particle>()) as u64;
 
@@ -34,79 +118,20 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
 
     let event_loop = EventLoop::new();
 
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        dx12_shader_compiler: Default::default(),
-    });
-
-    #[cfg(not(feature = "gl"))]
-    let (window, mut size, surface) = {
-        let window = winit::window::Window::new(&event_loop).unwrap();
-
-        let size = window.inner_size();
-
-        let surface = unsafe { instance.create_surface(&window) }.unwrap();
-
-        (window, size, surface)
-    };
-
-    #[cfg(feature = "gl")]
-    let (window, mut size, surface) = {
-        let wb = winit::WindowBuilder::new();
-        let cb = wgpu::glutin::ContextBuilder::new().with_vsync(true);
-        let context = cb.build_windowed(wb, &event_loop).unwrap();
-
-        let size = context
-            .window()
-            .get_inner_size()
-            .unwrap()
-            .to_physical(context.window().get_hidpi_factor());
-
-        let (context, window) = unsafe { context.make_current().unwrap().split() };
-
-        let surface = wgpu::Surface::create(&window);
-
-        (window, size, surface)
-    };
-
-    // Try to grab mouse
-    // let _ = window.set_cursor_grab(true);
-
-    window.set_cursor_visible(false);
-    window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
-        window.primary_monitor(),
-    )));
-
-    // Pick a GPU
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        });
-    let adapter: Adapter = futures::executor::block_on(adapter).unwrap();
+    let window = WindowBuilder::new()
+        .with_title(env!("CARGO_PKG_NAME"))
+        .build(&event_loop).ok().unwrap();
+    let mut display = Display::new(window).await.unwrap();
     
-    println!("{:?}", adapter.get_info());
+    // Try to grab mouse
+    let _ = display.window().set_cursor_grab(winit::window::CursorGrabMode::Confined);
+    display.window().set_cursor_visible(false);
+    
 
-    // Request access to that GPU
-    let (device, queue) = futures::executor::block_on(
-        adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH | wgpu::Features::VERTEX_WRITABLE_STORAGE,
-                limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                },
-            },
-            None,
-        )).unwrap();
     // Load compute shader for the simulation
     let cs = include_bytes!("shader.comp.spv");
     let cs_module = unsafe {
-        device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
+        display.device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
             label: Some("Compute Shader"),
             source: wgpu::util::make_spirv_raw(cs),
             })
@@ -115,7 +140,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     // Load vertex shader to set calculate perspective, size and position of particles
     let vs = include_bytes!("shader.vert.spv");
     let vs_module = unsafe {
-        device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
+        display.device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
             label: Some("Vertex Shader"),
             source: wgpu::util::make_spirv_raw(vs),
             })
@@ -124,61 +149,54 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     // Load fragment shader
     let fs = include_bytes!("shader.frag.spv");
     let fs_module = unsafe {
-        device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
+        display.device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV{
             label: Some("Fragment Shader"),
             source: wgpu::util::make_spirv_raw(fs),
             })
     };
 
     // Create globals buffer to give global information to the shader
-    let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let globals_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Globals Buffer"),
         contents: bytemuck::cast_slice(&[globals]),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
+    println!("Globals_buffer: {:?}", globals_buffer);
 
     // Create buffer for the previous state of the particles
-    let old_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let old_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
         size: particles_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         label: Some("Old Buffer"),
         mapped_at_creation: false,
     });
+    println!("Old_buffer: {:?}", old_buffer);
+
     let particles_json: String = serde_json::to_string(&particles).unwrap();
     let particles_bytes: &[u8] = particles_json.as_bytes();
     // Create buffer for the current state of the particles
-    let current_buffer_initializer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let current_buffer_initializer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Current Buffer Initializer"),
         contents: particles_bytes,        
         usage: wgpu::BufferUsages::COPY_SRC,
     });
+    println!("Current_buffer_initializer: {:?}", current_buffer_initializer);
 
-    let current_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let current_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
         size: particles_size,
         usage: wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE,
+            | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
         label: Some("Current Buffer"),
         mapped_at_creation: false,
     });
-
-    let surface_caps = surface.get_capabilities(&adapter);
-
-    let mut config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: wgpu::TextureFormat::Bgra8UnormSrgb,
-        width: size.width,
-        height: size.height,
-        present_mode: wgpu::PresentMode::Immediate,
-        alpha_mode: surface_caps.alpha_modes[0],
-        view_formats: vec![],
-    };
+    println!("Current_buffer: {:?}", current_buffer);
 
     // Texture to keep track of which particle is in front (for the camera)
-    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+    let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Depth Texture"),
         size: wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
+            width: display.config.width,
+            height: display.config.height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -191,7 +209,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     let mut depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     // Describe the buffers that will be available to the GPU
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    let bind_group_layout = display.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Bind Group Layout"),
         entries: &[
             // Globals
@@ -201,8 +219,10 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
-                },                count: None,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<Globals>() as _,)
+                },
+                count: None,
             },
             // Old Particle data
             wgpu::BindGroupLayoutEntry {
@@ -234,16 +254,17 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             },
         ],
     });
+    println!("Bind_group_layout: {:?}", bind_group_layout);
 
     // Create the resources described by the bind_group_layout
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = display.device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Particle Bind Group"),
         layout: &bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &old_buffer,
+                    buffer: &globals_buffer,
                     offset: 0,
                     size: Some(std::num::NonZeroU64::new(std::mem::size_of::<Globals>() as u64,
                 ).unwrap()),
@@ -267,16 +288,17 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             },
         ],
     });
+    println!("Bind_group created: {:?}", bind_group);
 
     // Combine all bind_group_layouts
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout = display.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Pipeline Layout"),
         bind_group_layouts: &[&bind_group_layout],
         push_constant_ranges: &[],
     });
 
     // Create compute pipeline
-    let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    let compute_pipeline = display.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("Compute Pipeline"),
         layout: Some(&pipeline_layout),
         module: &cs_module,
@@ -284,7 +306,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     });
 
     // Create render pipeline
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let render_pipeline = display.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
@@ -296,7 +318,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             module: &fs_module,
             entry_point: "main",
             targets: &[Some(wgpu::ColorTargetState {
-                format: config.format,
+                format: display.config.format,
                 blend: Some(wgpu::BlendState {
                     color: wgpu::BlendComponent::REPLACE,
                     alpha: wgpu::BlendComponent::REPLACE,
@@ -348,8 +370,12 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     globals.matrix = build_matrix(
         globals.camera_pos.into(),
         camera_dir,
-        size.width as f32 / size.height as f32,
+        display.size.width as f32 / display.size.height as f32,
     ).into();
+
+    println!("Initial camera position: {:?}", globals.camera_pos);
+    println!("Initial camera direction: {:?}", camera_dir);
+    println!("Initial camera matrix: {:?}", globals.matrix);
 
     // Speed of the camera
     let mut fly_speed = 1E10;
@@ -366,7 +392,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
     // Initial setup
     {
         let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Command Encoder") });
+            display.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Command Encoder") });
 
         // Initialize current particle buffer
         encoder.copy_buffer_to_buffer(
@@ -377,7 +403,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
             particles_size,
         );
 
-        queue.submit([encoder.finish()]);
+        display.queue.submit([encoder.finish()]);
     }
 
     // Start main loop
@@ -446,11 +472,11 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                             println!("delta: {:?}, fps: {:.2}", delta, 1.0 / delta.as_secs_f32());
                         }
                         event::VirtualKeyCode::F11 => {
-                            if window.fullscreen().is_some() {
-                                window.set_fullscreen(None);
+                            if display.window().fullscreen().is_some() {
+                                display.window().set_fullscreen(None);
                             } else {
-                                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
-                                    window.primary_monitor(),
+                                display.window().set_fullscreen(Some(winit::window::Fullscreen::Borderless(
+                                    display.window().primary_monitor(),
                                 )));
                             }
                         }
@@ -487,19 +513,17 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
 
                 // Resize window
                 event::WindowEvent::Resized(new_size) => {
-                    size = new_size;
+                    display.size = new_size;
 
                     // Reset swap chain, it's outdated
-                    config.width = new_size.width;
-                    config.height = new_size.height;
-                    surface.configure(&device, &config);
+                    display.resize(new_size.width, new_size.height);
 
                     // Reset depth texture
-                    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+                    let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("Depth Texture new"),
                         size: wgpu::Extent3d {
-                            width: config.width,
-                            height: config.height,
+                            width: display.config.width,
+                            height: display.config.height,
                             depth_or_array_layers: 1,
                         },
                         view_formats: &[],
@@ -520,13 +544,13 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                 let dt = delta.as_secs_f32();
                 last_tick = Instant::now();
 
-                let frame = surface.get_current_texture();
+                let frame = display.surface.get_current_texture();
                 let surface_texture = frame.ok().expect("Couldn't find frame texture!");
                 let view = surface_texture
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
                 let mut encoder =
-                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    display.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                         label: Some("Command Encoder"),});
 
                 camera_dir.normalize();
@@ -545,6 +569,7 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
 
                 if pressed_keys.contains(&event::VirtualKeyCode::D) {
                     tmp += right * fly_speed * dt;
+                    // println!("D key pressed")
                 }
 
                 if pressed_keys.contains(&event::VirtualKeyCode::W) {
@@ -566,15 +591,15 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                 globals.matrix = build_matrix(
                     tmp.into(),
                     camera_dir,
-                    size.width as f32 / size.height as f32,
+                    display.config.width as f32 / display.config.height as f32,
                 ).into();
                 globals.camera_pos = [tmp[0], tmp[1], tmp[2]];
 
                 // Create new globals buffer
-                let new_globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                let new_globals_buffer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Globals Buffer"),
                     contents: bytemuck::cast_slice(&[globals]),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC,
                 });
 
                 // Upload the new globals buffer to the GPU
@@ -585,6 +610,9 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                     0,
                     std::mem::size_of::<Globals>() as u64,
                 );
+                
+                println!("camera_dir: {:?}, right: {:?}, tmp: {:?}", camera_dir, right, tmp);
+                println!("globals updated to: {:?}, {:?}", globals.camera_pos, globals.matrix);
 
                 // Compute the simulation a few times
                 for _ in 0..TICKS_PER_FRAME {
@@ -597,7 +625,8 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                     );
                     let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("Compute pass"),
-                    });                    cpass.set_pipeline(&compute_pipeline);
+                    });                    
+                    cpass.set_pipeline(&compute_pipeline);
                     cpass.set_bind_group(0, &bind_group, &[]);
                     cpass.dispatch_workgroups(work_group_count, 1, 1);
                 }
@@ -640,15 +669,14 @@ pub fn run(mut globals: Globals, particles: Vec<Particle>) {
                 }
                 drop(view);
 
-                queue.submit([encoder.finish()]);
+                display.queue.submit([encoder.finish()]);
                 surface_texture.present();
-                surface.configure(&device, &config);
-                // drop(surface_texture);
+                display.surface.configure(&display.device, &display.config);
             }
 
             // No more events in queue
             event::Event::MainEventsCleared => {
-                window.request_redraw();
+                display.window.request_redraw();
             }
             _ => {}
         }
