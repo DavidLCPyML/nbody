@@ -16,6 +16,7 @@ use {
 
 const TICKS_PER_FRAME: u32 = 3; // Number of simulation steps per redraw
 const PARTICLES_PER_GROUP: u32 = 256; // REMEMBER TO CHANGE SHADER.COMP
+const NUM_PARTICLES: u32 = 1500;
 
 fn build_matrix(pos: Point3<f32>, dir: Vector3<f32>, aspect: f32) -> Matrix4<f32> {
     Matrix4::from(PerspectiveFov {
@@ -124,8 +125,8 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
     let mut display = Display::new(window).await.unwrap();
     
     // Try to grab mouse
-    let _ = display.window().set_cursor_grab(winit::window::CursorGrabMode::Confined);
-    display.window().set_cursor_visible(false);
+    // let _ = display.window().set_cursor_grab(winit::window::CursorGrabMode::Confined);
+    // display.window().set_cursor_visible(false);
     
 
     // Load compute shader for the simulation
@@ -163,50 +164,24 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
     });
     println!("Globals_buffer: {:?}", globals_buffer);
 
-    // Create buffer for the previous state of the particles
-    let old_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
-        size: particles_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        label: Some("Old Buffer"),
-        mapped_at_creation: false,
-    });
-    println!("Old_buffer: {:?}", old_buffer);
-
-    let particles_json: String = serde_json::to_string(&particles).unwrap();
-    let particles_bytes: &[u8] = particles_json.as_bytes();
-    // Create buffer for the current state of the particles
-    let current_buffer_initializer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Current Buffer Initializer"),
-        contents: particles_bytes,        
-        usage: wgpu::BufferUsages::COPY_SRC,
-    });
-    println!("Current_buffer_initializer: {:?}", current_buffer_initializer);
-
-    let current_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
-        size: particles_size,
-        usage: wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
-        label: Some("Current Buffer"),
-        mapped_at_creation: false,
-    });
-    println!("Current_buffer: {:?}", current_buffer);
+    
 
     // Texture to keep track of which particle is in front (for the camera)
-    let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Depth Texture"),
-        size: wgpu::Extent3d {
-            width: display.config.width,
-            height: display.config.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
-        view_formats: &[],
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-    });
-    let mut depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    // let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
+    //     label: Some("Depth Texture"),
+    //     size: wgpu::Extent3d {
+    //         width: display.config.width,
+    //         height: display.config.height,
+    //         depth_or_array_layers: 1,
+    //     },
+    //     mip_level_count: 1,
+    //     sample_count: 1,
+    //     dimension: wgpu::TextureDimension::D2,
+    //     format: wgpu::TextureFormat::Depth32Float,
+    //     view_formats: &[],
+    //     usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    // });
+    // let mut depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
     // Describe the buffers that will be available to the GPU
     let bind_group_layout = display.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -236,7 +211,6 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                     ),
                 },
                 count: None,
-
             },
             // Current Particle data
             wgpu::BindGroupLayoutEntry {
@@ -250,112 +224,167 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                     ),
                 },
                 count: None,
-
             },
         ],
     });
     println!("Bind_group_layout: {:?}", bind_group_layout);
 
-    // Create the resources described by the bind_group_layout
-    let bind_group = display.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Particle Bind Group"),
-        layout: &bind_group_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &globals_buffer,
-                    offset: 0,
-                    size: Some(std::num::NonZeroU64::new(std::mem::size_of::<Globals>() as u64,
-                ).unwrap()),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &old_buffer,
-                    offset: 0,
-                    size: Some(std::num::NonZeroU64::new(particles_size).unwrap()),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &current_buffer,
-                    offset: 0,
-                    size: Some(std::num::NonZeroU64::new(particles_size).unwrap()),
-                }),
-            },
-        ],
-    });
-    println!("Bind_group created: {:?}", bind_group);
+    let compute_bind_group_layout =
+        display.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            (sim_param_data.len() * std::mem::size_of::<f32>()) as _,
+                        ),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new((NUM_PARTICLES * 16) as _),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new((NUM_PARTICLES * 16) as _),
+                    },
+                    count: None,
+                },
+            ],
+            label: None,
+        });
+    let compute_pipeline_layout =
+        display.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("compute"),
+            bind_group_layouts: &[&compute_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
-    // Combine all bind_group_layouts
-    let pipeline_layout = display.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Pipeline Layout"),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
+    let render_pipeline_layout =
+        display.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("render"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+        let mut particle_buffers = Vec::<wgpu::Buffer>::new();
+        let mut particle_bind_groups = Vec::<wgpu::BindGroup>::new();
+            for i in 0..2 {
+                particle_buffers.push(
+                    display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(&format!("Particle Buffer {i}")),
+                        contents: bytemuck::cast_slice(&initial_particle_data),
+                        usage: wgpu::BufferUsages::VERTEX
+                            | wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_DST,
+                    }),
+                );
+            }
+    
+            // create two bind groups, one for each buffer as the src
+            // where the alternate buffer is used as the dst
+    
+            for i in 0..2 {
+                particle_bind_groups.push(display.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    layout: &compute_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: sim_param_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: particle_buffers[i].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: particle_buffers[(i + 1) % 2].as_entire_binding(), // bind to opposite buffer
+                        },
+                    ],
+                    label: None,
+                }));
+            }
+
+    let render_pipeline = display.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: None,
+        layout: Some(&render_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &vs_module,
+            entry_point: "main_vs",
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: 4 * 4,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: 2 * 4,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![2 => Float32x2],
+                },
+            ],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &fs_module,
+            entry_point: "main_fs",
+            targets: &[Some(display.config.view_formats[0].into())],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
     });
 
     // Create compute pipeline
     let compute_pipeline = display.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("Compute Pipeline"),
-        layout: Some(&pipeline_layout),
+        label: Some("Compute pipeline"),
+        layout: Some(&compute_pipeline_layout),
         module: &cs_module,
         entry_point: "main",
     });
 
     // Create render pipeline
     let render_pipeline = display.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Render Pipeline"),
-        layout: Some(&pipeline_layout),
+        label: None,
+        layout: Some(&render_pipeline_layout),
         vertex: wgpu::VertexState {
             module: &vs_module,
-            entry_point: "main",
-            buffers: &[],
+            entry_point: "main_vs",
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: 4 * 4,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2],
+                },
+                wgpu::VertexBufferLayout {
+                    array_stride: 2 * 4,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![2 => Float32x2],
+                },
+            ],
         },
         fragment: Some(wgpu::FragmentState {
             module: &fs_module,
-            entry_point: "main",
-            targets: &[Some(wgpu::ColorTargetState {
-                format: display.config.format,
-                blend: Some(wgpu::BlendState {
-                    color: wgpu::BlendComponent::REPLACE,
-                    alpha: wgpu::BlendComponent::REPLACE,
-                }),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
+            entry_point: "main_fs",
+            targets: &[Some(display.config.view_formats[0].into())],
         }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            unclipped_depth: false,
-            conservative: false,
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: true,
-            bias: wgpu::DepthBiasState {
-                constant: 0,
-                slope_scale: 0.0,
-                clamp: 0.0,
-              },
-            depth_compare: wgpu::CompareFunction::LessEqual,
-            stencil: wgpu::StencilState {
-                front: wgpu::StencilFaceState::IGNORE,
-                back: wgpu::StencilFaceState::IGNORE,
-                read_mask: 0,
-                write_mask: 0,
-              },
-        }),        
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
         multiview: None,
     });
 
@@ -519,21 +548,21 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                     display.resize(new_size.width, new_size.height);
 
                     // Reset depth texture
-                    let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("Depth Texture new"),
-                        size: wgpu::Extent3d {
-                            width: display.config.width,
-                            height: display.config.height,
-                            depth_or_array_layers: 1,
-                        },
-                        view_formats: &[],
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Depth32Float,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    });
-                    depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    // let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
+                    //     label: Some("Depth Texture new"),
+                    //     size: wgpu::Extent3d {
+                    //         width: display.config.width,
+                    //         height: display.config.height,
+                    //         depth_or_array_layers: 1,
+                    //     },
+                    //     view_formats: &[],
+                    //     mip_level_count: 1,
+                    //     sample_count: 1,
+                    //     dimension: wgpu::TextureDimension::D2,
+                    //     format: wgpu::TextureFormat::Depth32Float,
+                    //     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    // });
+                    // depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
                 }
                 _ => {}
             },
@@ -611,8 +640,8 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                     std::mem::size_of::<Globals>() as u64,
                 );
                 
-                println!("camera_dir: {:?}, right: {:?}, tmp: {:?}", camera_dir, right, tmp);
-                println!("globals updated to: {:?}, {:?}", globals.camera_pos, globals.matrix);
+                // println!("camera_dir: {:?}, right: {:?}, tmp: {:?}", camera_dir, right, tmp);
+                // println!("globals updated to: {:?}, {:?}", globals.camera_pos, globals.matrix);
 
                 // Compute the simulation a few times
                 for _ in 0..TICKS_PER_FRAME {
@@ -627,7 +656,7 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                         label: Some("Compute pass"),
                     });                    
                     cpass.set_pipeline(&compute_pipeline);
-                    cpass.set_bind_group(0, &bind_group, &[]);
+                    cpass.set_bind_group(0, &, &[]);
                     cpass.dispatch_workgroups(work_group_count, 1, 1);
                 }
 
@@ -648,27 +677,13 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                                 store: true,
                             },
                         })],
-                        depth_stencil_attachment: Some(
-                            wgpu::RenderPassDepthStencilAttachment {
-                                view: &depth_view,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: true,
-                                }),
-                                stencil_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(0),
-                                    store: true,
-                                })
-                            },
-                        ),
+                        depth_stencil_attachment: None,
                     });
 
                     rpass.set_pipeline(&render_pipeline);
-                    rpass.set_bind_group(0, &bind_group, &[]);
+                    rpass.set_bind_group(0, &particle_bind_groups[self.frame_num % 2], &[]);
                     rpass.draw(0..particles.len() as u32, 0..1);
                 }
-                drop(view);
-
                 display.queue.submit([encoder.finish()]);
                 surface_texture.present();
                 display.surface.configure(&display.device, &display.config);
