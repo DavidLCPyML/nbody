@@ -1,6 +1,6 @@
 //! This module is responsible for defining the external config format and parsing it.
 use {
-    crate::{galaxygen, Particle},
+    crate::{gen, Particle},
     serde::Deserialize,
 };
 
@@ -30,11 +30,8 @@ pub enum Construction {
 }
 
 impl Config {
-    /// Build the actual particles from the constructions.
     pub fn construct_particles(&self) -> Vec<Particle> {
         let mut particles = Vec::new();
-
-        // Those with mass first
         for c in &self.constructions {
             particles.push(match c {
                 Construction::Particle { pos, vel, mass } => {
@@ -54,7 +51,6 @@ impl Config {
             })
         }
 
-        // Particles without mass last
         for c in &self.constructions {
             if let Construction::Galaxy {
                 center_pos,
@@ -64,7 +60,7 @@ impl Config {
                 normal,
             } = c
             {
-                galaxygen::generate_galaxy(
+                gen::generate_galaxy(
                     &mut particles,
                     *amount,
                     self.safety,

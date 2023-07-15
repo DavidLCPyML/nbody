@@ -12,7 +12,7 @@
 )]
 
 mod config;
-mod galaxygen;
+mod gen;
 mod render;
 
 use {
