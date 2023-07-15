@@ -9,9 +9,11 @@ layout(location = 0) out vec3 fragColor;
 
 struct Particle {
     vec3 pos; // 0, 1, 2
-    float radius; // 7
+    float radius; // 3
     vec3 vel; // 4, 5, 6
-    double mass; // 7, 8
+    float _p; // 7
+    double mass; // 8, 9
+    vec2 _p2; // 10, 11
 };
 
 layout(set = 0, binding = 0) uniform GlobalsBuffer {
@@ -19,6 +21,7 @@ layout(set = 0, binding = 0) uniform GlobalsBuffer {
     vec3 camera_pos;
     uint particles;
     float delta;
+    float _p;
 };
 
 layout(std430, set = 0, binding = 2) buffer DataCurrent {

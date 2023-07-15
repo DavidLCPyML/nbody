@@ -161,15 +161,15 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
         contents: bytemuck::cast_slice(&[globals]),
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     });
-    println!("Globals_buffer: {:?}", globals_buffer);
+    // println!("Globals_buffer: {:?}", globals_buffer);
 
 
-    let mut initial_particle_data = vec![0.0f32; particles_size as usize];
+    let mut initial_particle_data = vec![0.0f32; (particles.len()*12) as usize];
     // println!("initial_particle_data: {:?}", initial_particle_data.len()/11);
     // println!("particles: {:?}", particles.len());
-    // println!("chunks: {:?}", initial_particle_data.chunks_mut(11*4).len());
+    // println!("chunks: {:?}", initial_particle_data.chunks_mut(11).len());
     let mut i = 0;
-    for particle_instance_chunk in initial_particle_data.chunks_mut(44) {
+    for particle_instance_chunk in initial_particle_data.chunks_mut(12) {
         particle_instance_chunk[0] = particles[i].pos[0];
         particle_instance_chunk[1] = particles[i].pos[1];
         particle_instance_chunk[2] = particles[i].pos[2];
@@ -178,15 +178,17 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
         particle_instance_chunk[5] = particles[i].vel[1];
         particle_instance_chunk[6] = particles[i].vel[2];
         particle_instance_chunk[7] = particles[i]._p;
-        particle_instance_chunk[8] = particles[i].mass;
-        particle_instance_chunk[9] = particles[i]._p2[0];
-        particle_instance_chunk[10] = particles[i]._p2[1];
+        let mass_arr : [f32; 2] = bytemuck::cast_slice(&[particles[i].mass]).try_into().unwrap();
+        particle_instance_chunk[8] = mass_arr[0];
+        particle_instance_chunk[9] = mass_arr[1];
+        particle_instance_chunk[10] = particles[i]._p2[0];
+        particle_instance_chunk[11] = particles[i]._p2[1];
         i += 1;
     }
 
-    println!("random particle: {:?}", initial_particle_data[0..11].to_vec());
-
-    println!("initial_particle_data: {:?}", initial_particle_data.len());
+    println!("random particle: {:?}", initial_particle_data[0..12].to_vec());
+    println!("random particle: {:?}", particles[0]);
+    // println!("initial_particle_data: {:?}", initial_particle_data.len());
 
     // Create buffer for the previous state of the particles
     let old_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
@@ -195,7 +197,7 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
         label: Some("Old Buffer"),
         mapped_at_creation: false,
     });
-    println!("Old_buffer: {:?}", old_buffer);
+    // println!("Old_buffer: {:?}", old_buffer);
 
     // Create buffer for the current state of the particles
     let current_buffer_initializer = display.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -203,7 +205,8 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
         contents: bytemuck::cast_slice(&initial_particle_data),        
         usage: wgpu::BufferUsages::COPY_SRC,
     });
-    println!("Current_buffer_initializer: {:?}", current_buffer_initializer);
+    // println!("Current_buffer_initializer: {:?}", current_buffer_initializer);
+    println!("Current_buffer_initializer size: {:?}", current_buffer_initializer.size());
 
     let current_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
         size: particles_size,
@@ -212,7 +215,8 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
         label: Some("Current Buffer"),
         mapped_at_creation: false,
     });
-    println!("Current_buffer: {:?}", current_buffer);
+    // println!("Current_buffer: {:?}", current_buffer);
+    println!("Current_buffer size: {:?}", current_buffer.size());
 
     // Texture to keep track of which particle is in front (for the camera)
     let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
@@ -239,7 +243,7 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BindingType::Buffer { 
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(
@@ -251,67 +255,53 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BindingType::Buffer { 
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(
-                        std::mem::size_of::<Particle>() as _,
-                    ),
+                        std::mem::size_of::<Particle>() as _, ), 
                 },
                 count: None,
-
             },
             // Current Particle data
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BindingType::Buffer { 
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: wgpu::BufferSize::new(
-                        std::mem::size_of::<Particle>() as _,
-                    ),
+                        std::mem::size_of::<Particle>() as _, ), 
                 },
                 count: None,
-
             },
         ],
     });
-    println!("Bind_group_layout: {:?}", bind_group_layout);
+    // println!("Bind_group_layout: {:?}", bind_group_layout);
 
     // Create the resources described by the bind_group_layout
     let bind_group = display.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Particle Bind Group"),
+        label: Some("Bind Group"),
         layout: &bind_group_layout,
         entries: &[
+            // Globals
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &globals_buffer,
-                    offset: 0,
-                    size: Some(std::num::NonZeroU64::new(std::mem::size_of::<Globals>() as u64,
-                ).unwrap()),
-                }),
+                resource: globals_buffer.as_entire_binding(),
             },
+            // Old Particle data
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &old_buffer,
-                    offset: 0,
-                    size: Some(std::num::NonZeroU64::new(particles_size).unwrap()),
-                }),
+                resource: old_buffer.as_entire_binding(),
             },
+            // Current Particle data
             wgpu::BindGroupEntry {
                 binding: 2,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &current_buffer,
-                    offset: 0,
-                    size: Some(std::num::NonZeroU64::new(particles_size).unwrap()),
-                }),
+                resource: current_buffer.as_entire_binding(),
             },
         ],
     });
-    println!("Bind_group created: {:?}", bind_group);
+    // println!("Bind_group created: {:?}", bind_group);
 
     // Combine all bind_group_layouts
     let pipeline_layout = display.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -323,11 +313,10 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
     // Create compute pipeline
     let compute_pipeline = display.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("Compute Pipeline"),
-        layout: Some(&pipeline_layout),
         module: &cs_module,
         entry_point: "main",
+        layout: Some(&pipeline_layout),
     });
-
     // Create render pipeline
     let render_pipeline = display.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
@@ -350,7 +339,7 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
             })],
         }),
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
+            topology: wgpu::PrimitiveTopology::PointList,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: None,
@@ -396,9 +385,9 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
         display.size.width as f32 / display.size.height as f32,
     ).into();
 
-    println!("Initial camera position: {:?}", globals.camera_pos);
-    println!("Initial camera direction: {:?}", camera_dir);
-    println!("Initial camera matrix: {:?}", globals.matrix);
+    // println!("Initial camera position: {:?}", globals.camera_pos);
+    // println!("Initial camera direction: {:?}", camera_dir);
+    // println!("Initial camera matrix: {:?}", globals.matrix);
 
     // Speed of the camera
     let mut fly_speed = 1E10;
@@ -646,13 +635,12 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                         0,
                         particles_size,
                     );
-                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("Compute pass"),
-                    });                    
+                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Compute Pass"), });
                     cpass.set_pipeline(&compute_pipeline);
                     cpass.set_bind_group(0, &bind_group, &[]);
                     cpass.dispatch_workgroups(work_group_count, 1, 1);
                 }
+
 
                 {
                     // Render the current state
