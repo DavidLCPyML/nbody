@@ -1,30 +1,28 @@
 #version 450
 
 const float G = 6.67408E-11;
-const uint PARTICLES_PER_GROUP = 256; // REMEMBER TO CHANGE MAIN.RS
+const uint PARTICLES_PER_GROUP = 256;
 
 layout(local_size_x = PARTICLES_PER_GROUP) in;
 
 struct Particle {
-    vec3 pos; // 0, 1, 2
-    float radius; // 3
-    vec3 vel; // 4, 5, 6
-    float _p; // 7
-    double mass; // 8, 9
-    vec2 _p2; // 10, 11
+    vec3 pos;
+    float _p1;
+    vec3 vel;
+    float _pad;
+    double mass;
+    double calibrate;
 };
 
 layout(set = 0, binding = 0) uniform GlobalsBuffer {
     mat4 matrix;
-    vec3 camera_pos;
     uint particles;
-    double safety;
     float delta;
-    float _p;
+    vec2 _pad;
 };
 
 layout(std430, set = 0, binding = 1) buffer DataOld {
-    Particle data_old[];
+    Particle old[];
 };
 
 layout(std430, set = 0, binding = 2) buffer DataCurrent {
@@ -36,32 +34,23 @@ double length2(dvec3 v) {
 }
 
 void main() {
-    // Get index of current particle
     uint i = gl_GlobalInvocationID.x;
-
-    // Early return
-    if(data_old[i].mass < 0) { 
+    if(old[i].mass < 0) { 
         return;
     }
 
     // Gravity
     if(delta > 0.0) {
         dvec3 temp = dvec3(0.0, 0.0, 0.0);
-
-        // Go through all other particles...
         for(int j = 0; j < particles; j++) {
-            // Skip self
-            if(j == i) { continue; }
+            if(j == i) { 
+                continue;
+            }
+            if(old[j].mass == 0) { break; }
 
-            // If a single particle with no mass is encountered, the entire loop
-            // terminates (because they are sorted by mass)
-            if(data_old[j].mass == 0) { break; }
-
-            dvec3 diff = data_old[j].pos - data_old[i].pos;
-            temp += normalize(diff) * data_old[j].mass / (length2(diff)+safety);
+            dvec3 diff = old[j].pos - old[i].pos;
+            temp += normalize(diff) * old[j].mass / (length2(diff) + old[j].calibrate);
         }
-
-        // Update data
         data[i].vel += vec3(temp * G * delta);
         data[i].pos += data[i].vel * delta;
     }

@@ -1,5 +1,3 @@
-//! This module can generate spiral galaxies based on some parameters.
-
 use {
     crate::Particle,
     cgmath::{
@@ -10,77 +8,62 @@ use {
     std::f32::consts::PI,
 };
 
-const G: f64 = 6.67408E-11;
-const ARMS: u32 = 2;
+const G: f64 = 6.67408e-11;
+const ARMS: u32 = 4;
 
-/// Fill the particles vector with many stars of a spiral galaxy.
-pub fn generate_galaxy(
+pub fn create(
+    angle: f32,
+    mut normal: Vector3<f32>,
     particles: &mut Vec<Particle>,
-    amount: u32,
-    safety: f64,
+    calibrate: f64,
     center_pos: Point3<f32>,
     center_vel: Vector3<f32>,
     center_mass: f64,
-    mut normal: Vector3<f32>,
+    radius: f32,
 ) {
-    // Helpers
     normal = normal.normalize();
-    let tangent = normal.cross(Vector3::new(-normal.z, normal.x, normal.y));
+    let tangent = normal.cross(Vector3::new(normal.z, normal.y, normal.x));
     let bitangent = normal.cross(tangent);
+    let diff = tangent * angle.sin() + bitangent * angle.cos();
+    let movement = diff.cross(normal).normalize();
+    let pos = center_pos + diff * radius;
+    let speed = (G * center_mass * radius as f64 / ((radius * radius) as f64 + calibrate))
+        .sqrt() as f32;
+    let vel = center_vel + movement * speed;
+    particles.push(Particle::new(pos.into(), vel.into(), 0.0, calibrate));
+}
 
-    // Generate center of the galaxy
+pub fn formation(
+    particles: &mut Vec<Particle>,
+    amount: u32,
+    calibrate: f64,
+    center_pos: Point3<f32>,
+    center_vel: Vector3<f32>,
+    center_mass: f64,
+    normal: Vector3<f32>,
+) {
     for _ in 0..amount / 5 {
-        let radius = 5E9
-            + (rand_distr::Normal::<f32>::new(0.0, 1E11)
-                .unwrap()
-                .sample(&mut thread_rng()))
-            .abs();
+        let radius = 5e9
+        + (rand_distr::Normal::<f32>::new(0.0, 1e11)
+            .unwrap()
+            .sample(&mut thread_rng()))
+        .abs();
         let angle = thread_rng().gen::<f32>() * 2.0 * PI;
-
-        let diff = tangent * angle.sin() + bitangent * angle.cos();
-
-        let fly_direction = diff.cross(normal).normalize();
-
-        let pos = center_pos + diff * radius;
-
-        let mass = 0E30;
-        let density = 1.408;
-
-        let speed = (G * center_mass * radius as f64 / (radius as f64 * radius as f64 + safety))
-            .sqrt() as f32;
-        let vel = center_vel + fly_direction * speed;
-
-        particles.push(Particle::new(pos.into(), vel.into(), mass, density));
+        create(angle, normal, particles, calibrate, center_pos, center_vel, center_mass, radius);
     }
 
-    // Generate spiral arms of the galaxy
+    // based on number of stars in the arms vs center of Milky Way
     for _ in 0..amount / 5 * 4 {
-        // Choose arm
+        let radius = 5e9
+        + (rand_distr::Normal::<f32>::new(0.0, 1e11)
+            .unwrap()
+            .sample(&mut thread_rng()))
+        .abs();
         let arm = rand_distr::Uniform::from(0..ARMS).sample(&mut thread_rng());
-
-        let radius = 5E9
-            + (rand_distr::Normal::<f32>::new(0.0, 1E11)
-                .unwrap()
-                .sample(&mut thread_rng()))
-            .abs();
-
-        let angle = arm as f32 / ARMS as f32 * 2.0 * PI - radius * 1E-11
+        let angle = (arm as f32 / ARMS as f32 * 2.0 * PI) - (radius * 1e-11)
             + rand_distr::Normal::new(0.0, PI / 16.0)
                 .unwrap()
                 .sample(&mut thread_rng());
-
-        let diff = tangent * angle.sin() + bitangent * angle.cos();
-
-        let fly_direction = diff.cross(normal).normalize();
-        let pos = center_pos + diff * radius;
-
-        let mass = 0E30;
-        let density = 1.408;
-
-        let speed = (G * center_mass * radius as f64 / (radius as f64 * radius as f64 + safety))
-            .sqrt() as f32;
-        let vel = center_vel + fly_direction * speed;
-
-        particles.push(Particle::new(pos.into(), vel.into(), mass, density));
+        create(angle, normal, particles, calibrate, center_pos, center_vel, center_mass, radius);
     }
 }
