@@ -42,7 +42,7 @@ impl Display {
         let surface = unsafe { instance.create_surface(&window) }.unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
@@ -125,6 +125,8 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
         .window()
         .set_cursor_grab(winit::window::CursorGrabMode::Confined);
     display.window().set_cursor_visible(false);
+
+    println!("window: {:?}", display.window());
 
     let cs = include_bytes!("shader.comp.spv");
     let cs_module = unsafe {
@@ -237,7 +239,6 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
     });
     let mut depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    // Describe the buffers that will be available to the GPU
     let bind_group_layout =
         display
             .device
