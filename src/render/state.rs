@@ -44,8 +44,6 @@ impl State {
             .ok();
         display.window().set_cursor_visible(false);
 
-        // println!("window: {:?}", display.window());
-
         let cs = include_bytes!("../shader.comp.spv");
         let cs_module = unsafe {
             display

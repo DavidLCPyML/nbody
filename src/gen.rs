@@ -13,7 +13,7 @@ const ARMS: u32 = 4;
 
 pub fn create(
     angle: f32,
-    mut normal: Vector3<f32>,
+    normal: Vector3<f32>,
     particles: &mut Vec<Particle>,
     calibrate: f64,
     center_pos: Point3<f32>,
@@ -21,10 +21,8 @@ pub fn create(
     center_mass: f64,
     radius: f32,
 ) {
-    normal = normal.normalize();
     let tangent = normal.cross(Vector3::new(normal.z, normal.y, normal.x));
-    let bitangent = normal.cross(tangent);
-    let diff = tangent * angle.sin() + bitangent * angle.cos();
+    let diff = tangent * angle.sin() + normal.cross(tangent) * angle.cos();
     let movement = diff.cross(normal).normalize();
     let pos = center_pos + diff * radius;
     let speed = (G * center_mass * radius as f64 / ((radius * radius) as f64 + calibrate))
@@ -49,7 +47,7 @@ pub fn formation(
             .sample(&mut thread_rng()))
         .abs();
         let angle = thread_rng().gen::<f32>() * 2.0 * PI;
-        create(angle, normal, particles, calibrate, center_pos, center_vel, center_mass, radius);
+        create(angle, normal.normalize(), particles, calibrate, center_pos, center_vel, center_mass, radius);
     }
 
     // based on number of stars in the arms vs center of Milky Way
@@ -64,6 +62,6 @@ pub fn formation(
             + rand_distr::Normal::new(0.0, PI / 16.0)
                 .unwrap()
                 .sample(&mut thread_rng());
-        create(angle, normal, particles, calibrate, center_pos, center_vel, center_mass, radius);
+        create(angle, normal.normalize(), particles, calibrate, center_pos, center_vel, center_mass, radius);
     }
 }

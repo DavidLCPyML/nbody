@@ -64,7 +64,6 @@ impl Display {
         surface.configure(&device, &config);
 
         let camera_pos = [0.0, 0.0, 1e10];
-
         Ok(Self {
             surface,
             window,
