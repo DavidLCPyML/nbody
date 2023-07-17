@@ -8,8 +8,6 @@ use {
 pub mod state;
 use state::State;
 
-const TICKS_PER_FRAME: u32 = 3;
-const PARTICLES_PER_GROUP: u32 = 256;
 fn build_matrix(pos: Point3<f32>, dir: Vector3<f32>, aspect: f32) -> Matrix4<f32> {
     Matrix4::from(PerspectiveFov {
         fovy: Rad(PI / 2.0),
@@ -21,9 +19,9 @@ fn build_matrix(pos: Point3<f32>, dir: Vector3<f32>, aspect: f32) -> Matrix4<f32
 
 pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
     let mut state: State = State::new(globals, particles).await;
-    let particles_size = (state.particles.len() * std::mem::size_of::<Particle>()) as u64;
-    let work_group_count =
-        ((state.particles.len() as f32) / (PARTICLES_PER_GROUP as f32)).ceil() as u32;
+    let n = state.particles.len();
+    let particles_size = (n * std::mem::size_of::<Particle>()) as u64;
+    let work_group_count = (n / 256) as u32;
 
     let mut camera_dir: Vector3<f32> = Vector3::new(
         -state.display.camera_pos[0],
@@ -225,7 +223,7 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
                     std::mem::size_of::<Globals>() as u64,
                 );
 
-                for _ in 0..TICKS_PER_FRAME {
+                for _ in 0..3 {
                     encoder.copy_buffer_to_buffer(
                         &state.current_buffer,
                         0,
@@ -272,7 +270,7 @@ pub async fn run(mut globals: Globals, particles: Vec<Particle>) {
 
                     rpass.set_pipeline(&state.render_pipeline);
                     rpass.set_bind_group(0, &state.bind_group, &[]);
-                    rpass.draw(0..state.particles.len() as u32, 0..1);
+                    rpass.draw(0..n as u32, 0..1);
                 }
                 drop(view);
 
