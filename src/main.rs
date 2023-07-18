@@ -14,9 +14,9 @@ const CALIBRATE: f64 = 1E20;
 #[repr(C)]
 pub struct Particle {
     pos: [f32; 3],
-    _p1: f32,
+    _pad1: f32,
     vel: [f32; 3],
-    _p2: f32,
+    _pad2: f32,
     mass: f64,
     calibrate: f64,
 }
@@ -39,11 +39,11 @@ pub enum Galaxy {
 
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
-pub struct Globals {
+pub struct GpuInfo {
     matrix: [[f32; 4]; 4],
     particles: u32,
-    delta: f32,
-    _p: [f32; 2],
+    motion: f32,
+    _pad1: [f32; 2],
 }
 
 impl Particle {
@@ -53,8 +53,8 @@ impl Particle {
             vel,
             mass,
             calibrate,
-            _p1: 0.0,
-            _p2: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
         }
     }
 }
@@ -122,11 +122,11 @@ fn main() {
     ];
 
     let particles = init_galaxy(CALIBRATE, galaxies);
-    let globals = Globals {
+    let gpu_info = GpuInfo {
         matrix: Matrix4::from_translation(Vector3::new(0.0, 0.0, 0.0)).into(),
         particles: particles.len() as u32,
-        delta: 6.0,
-        _p: [0.0; 2],
+        motion: 6.0,
+        _pad1: [0.0; 2],
     };
-    pollster::block_on(render::run(globals, particles));
+    pollster::block_on(render::run(gpu_info, particles));
 }

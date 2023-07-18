@@ -1,7 +1,4 @@
-[[location(0)]] var<in> fragColor : vec3<f32>;
-[[location(0)]] var<out> outColor : vec4<f32>;
-
-[[stage(fragment)]]
-fn main() -> void {
-    outColor = vec4<f32>(fragColor, 1.0);
+@fragment
+fn fs_main(@location(0) in_color: vec3<f32>) -> @location(0) vec4<f32> {
+  return vec4(in_color, 1.0);
 }

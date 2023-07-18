@@ -32,7 +32,7 @@ impl Display {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH
+                    features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH | wgpu::Features::SHADER_F64
                         | wgpu::Features::VERTEX_WRITABLE_STORAGE
                         | wgpu::Features::MAPPABLE_PRIMARY_BUFFERS,
                     limits: if cfg!(target_arch = "wasm32") {
@@ -74,10 +74,6 @@ impl Display {
             size,
             camera_pos,
         })
-    }
-
-    pub fn window(&self) -> &Window {
-        &self.window
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

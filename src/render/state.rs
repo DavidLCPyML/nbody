@@ -1,18 +1,18 @@
 use {
+    crate::{GpuInfo, Particle},
     wgpu::util::DeviceExt,
-    crate::{Globals, Particle},
     winit::{event_loop::EventLoop, window::WindowBuilder},
 };
 
 pub struct State {
-    pub globals: Globals,
+    pub gpu_info: GpuInfo,
     pub particles: Vec<Particle>,
-    pub old_buffer: wgpu::Buffer,
-    pub current_buffer: wgpu::Buffer,
-    pub current_buffer_initializer: wgpu::Buffer,
-    pub globals_buffer: wgpu::Buffer,
+    pub prev: wgpu::Buffer,
+    pub cur: wgpu::Buffer,
+    pub cur_init: wgpu::Buffer,
+    pub gpu_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
-    pub compute_pipeline: wgpu::ComputePipeline,
+    pub comp_pipeline: wgpu::ComputePipeline,
     pub render_pipeline: wgpu::RenderPipeline,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
@@ -26,36 +26,38 @@ pub mod display;
 use display::Display;
 
 impl State {
-    pub async fn new(globals: Globals, particles: Vec<Particle>) -> Self {
-        let particles_size = (particles.len() * std::mem::size_of::<Particle>()) as u64;
-
+    pub async fn new(gpu_info: GpuInfo, particles: Vec<Particle>) -> Self {
+        let p_size = (particles.len() * std::mem::size_of::<Particle>()) as u64;
         let event_loop = EventLoop::new();
-
         let window = WindowBuilder::new()
             .with_title(env!("CARGO_PKG_NAME"))
             .build(&event_loop)
             .ok()
             .unwrap();
         let display = Display::new(window).await.unwrap();
-
-        display
-            .window()
-            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
-            .ok();
-        display.window().set_cursor_visible(false);
-
-        let cs = include_bytes!("../shader.comp.spv");
-        let cs_module = unsafe {
-            display
-                .device
-                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                    label: Some("Compute Shader"),
-                    source: wgpu::util::make_spirv_raw(cs),
-                })
-        };
-
+        let cs_mod = display.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Compute Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../compute.wgsl").into()),
+        });
+        // let vs_mod = display.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        //     label: Some("Vertex Shader"),
+        //     source: wgpu::ShaderSource::Wgsl(include_str!("../vertex.wgsl").into()),
+        // });
+        let fs_mod = display.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Fragment Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../fragment.wgsl").into()),
+        });
+        // let cs = include_bytes!("../shader.comp.spv");
+        // let cs_mod = unsafe {
+        //     display
+        //         .device
+        //         .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+        //             label: Some("Compute Shader"),
+        //             source: wgpu::util::make_spirv_raw(cs),
+        //         })
+        // };
         let vs = include_bytes!("../shader.vert.spv");
-        let vs_module = unsafe {
+        let vs_mod = unsafe {
             display
                 .device
                 .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
@@ -63,66 +65,64 @@ impl State {
                     source: wgpu::util::make_spirv_raw(vs),
                 })
         };
+        // let fs = include_bytes!("../shader.frag.spv");
+        // let fs_mod = unsafe {
+        //     display
+        //         .device
+        //         .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+        //             label: Some("Fragment Shader"),
+        //             source: wgpu::util::make_spirv_raw(fs),
+        //         })
+        // };
 
-        let fs = include_bytes!("../shader.frag.spv");
-        let fs_module = unsafe {
-            display
-                .device
-                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                    label: Some("Fragment Shader"),
-                    source: wgpu::util::make_spirv_raw(fs),
-                })
-        };
-
-        let globals_buffer = display
+        let gpu_buffer = display
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Globals Buffer"),
-                contents: bytemuck::cast_slice(&[globals]),
+                label: Some("GpuInfo Buffer"),
+                contents: bytemuck::cast_slice(&[gpu_info]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
-        let mut initial_particle_data = vec![0.0f32; (particles.len() * 12) as usize];
+        let mut init_particle = vec![0.0f32; (particles.len() * 12) as usize];
         let mut i = 0;
-        for particle_instance_chunk in initial_particle_data.chunks_mut(12) {
-            particle_instance_chunk[0] = particles[i].pos[0];
-            particle_instance_chunk[1] = particles[i].pos[1];
-            particle_instance_chunk[2] = particles[i].pos[2];
-            particle_instance_chunk[3] = particles[i]._p1;
-            particle_instance_chunk[4] = particles[i].vel[0];
-            particle_instance_chunk[5] = particles[i].vel[1];
-            particle_instance_chunk[6] = particles[i].vel[2];
-            particle_instance_chunk[7] = particles[i]._p2;
+        for chunk in init_particle.chunks_mut(12) {
+            chunk[0] = particles[i].pos[0];
+            chunk[1] = particles[i].pos[1];
+            chunk[2] = particles[i].pos[2];
+            chunk[3] = particles[i]._pad1;
+            chunk[4] = particles[i].vel[0];
+            chunk[5] = particles[i].vel[1];
+            chunk[6] = particles[i].vel[2];
+            chunk[7] = particles[i]._pad2;
             let mass_arr: [f32; 2] = bytemuck::cast_slice(&[particles[i].mass])
                 .try_into()
                 .unwrap();
             let calib_arr: [f32; 2] = bytemuck::cast_slice(&[particles[i].calibrate])
                 .try_into()
                 .unwrap();
-            particle_instance_chunk[8] = mass_arr[0];
-            particle_instance_chunk[9] = mass_arr[1];
-            particle_instance_chunk[10] = calib_arr[0];
-            particle_instance_chunk[11] = calib_arr[1];
+            chunk[8] = mass_arr[0];
+            chunk[9] = mass_arr[1];
+            chunk[10] = calib_arr[0];
+            chunk[11] = calib_arr[1];
             i += 1;
         }
-        let old_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
-            size: particles_size,
+        let prev = display.device.create_buffer(&wgpu::BufferDescriptor {
+            size: p_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::MAP_READ,
             label: Some("Old Buffer"),
             mapped_at_creation: false,
         });
-        let current_buffer_initializer =
-            display
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Current Buffer Initializer"),
-                    contents: bytemuck::cast_slice(&initial_particle_data),
-                    usage: wgpu::BufferUsages::COPY_SRC,
-                });
-        let current_buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
-            size: particles_size,
+        let cur_init = display
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Current Buffer Initializer"),
+                contents: bytemuck::cast_slice(&init_particle),
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+        let cur = display.device.create_buffer(&wgpu::BufferDescriptor {
+            size: p_size,
             usage: wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::STORAGE,
@@ -158,7 +158,7 @@ impl State {
                                 ty: wgpu::BufferBindingType::Uniform,
                                 has_dynamic_offset: false,
                                 min_binding_size: wgpu::BufferSize::new(
-                                    std::mem::size_of::<Globals>() as _,
+                                    std::mem::size_of::<GpuInfo>() as _,
                                 ),
                             },
                             count: None,
@@ -197,15 +197,15 @@ impl State {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: globals_buffer.as_entire_binding(),
+                        resource: gpu_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: old_buffer.as_entire_binding(),
+                        resource: prev.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: current_buffer.as_entire_binding(),
+                        resource: cur.as_entire_binding(),
                     },
                 ],
             });
@@ -218,12 +218,12 @@ impl State {
                     push_constant_ranges: &[],
                 });
 
-        let compute_pipeline =
+        let comp_pipeline =
             display
                 .device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("Compute Pipeline"),
-                    module: &cs_module,
+                    module: &cs_mod,
                     entry_point: "main",
                     layout: Some(&pipeline_layout),
                 });
@@ -234,13 +234,13 @@ impl State {
                     label: Some("Render Pipeline"),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
-                        module: &vs_module,
+                        module: &vs_mod,
                         entry_point: "main",
                         buffers: &[],
                     },
                     fragment: Some(wgpu::FragmentState {
-                        module: &fs_module,
-                        entry_point: "main",
+                        module: &fs_mod,
+                        entry_point: "fs_main",
                         targets: &[Some(wgpu::ColorTargetState {
                             format: display.config.format,
                             blend: Some(wgpu::BlendState {
@@ -284,14 +284,14 @@ impl State {
                 });
 
         Self {
-            globals,
+            gpu_info,
             particles,
-            old_buffer,
-            current_buffer,
-            current_buffer_initializer,
-            globals_buffer,
+            prev,
+            cur,
+            cur_init,
+            gpu_buffer,
             bind_group,
-            compute_pipeline,
+            comp_pipeline,
             render_pipeline,
             depth_texture,
             depth_view,
