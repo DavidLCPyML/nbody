@@ -27,55 +27,34 @@ use display::Display;
 
 impl State {
     pub async fn new(gpu_info: GpuInfo, particles: Vec<Particle>) -> Self {
-        let p_size = (particles.len() * std::mem::size_of::<Particle>()) as u64;
-        let event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
+        let p_size: u64 = (particles.len() * std::mem::size_of::<Particle>()) as u64;
+        let event_loop: EventLoop<()> = EventLoop::new();
+        let window: winit::window::Window = WindowBuilder::new()
             .with_title(env!("CARGO_PKG_NAME"))
             .build(&event_loop)
             .ok()
             .unwrap();
-        let display = Display::new(window).await.unwrap();
-        let cs_mod = display.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../compute.wgsl").into()),
-        });
-        // let vs_mod = display.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        //     label: Some("Vertex Shader"),
-        //     source: wgpu::ShaderSource::Wgsl(include_str!("../vertex.wgsl").into()),
-        // });
-        let fs_mod = display.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Fragment Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../fragment.wgsl").into()),
-        });
-        // let cs = include_bytes!("../shader.comp.spv");
-        // let cs_mod = unsafe {
-        //     display
-        //         .device
-        //         .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-        //             label: Some("Compute Shader"),
-        //             source: wgpu::util::make_spirv_raw(cs),
-        //         })
-        // };
-        let vs = include_bytes!("../shader.vert.spv");
-        let vs_mod = unsafe {
-            display
-                .device
-                .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-                    label: Some("Vertex Shader"),
-                    source: wgpu::util::make_spirv_raw(vs),
-                })
-        };
-        // let fs = include_bytes!("../shader.frag.spv");
-        // let fs_mod = unsafe {
-        //     display
-        //         .device
-        //         .create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
-        //             label: Some("Fragment Shader"),
-        //             source: wgpu::util::make_spirv_raw(fs),
-        //         })
-        // };
+        let display: Display = Display::new(window).await.unwrap();
+        let cs_mod: wgpu::ShaderModule = display
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Compute Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("../compute.wgsl").into()),
+            });
+        let vs_mod: wgpu::ShaderModule = display
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Vertex Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("../vertex.wgsl").into()),
+            });
+        let fs_mod: wgpu::ShaderModule = display
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Fragment Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("../fragment.wgsl").into()),
+            });
 
-        let gpu_buffer = display
+        let gpu_buffer: wgpu::Buffer = display
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("GpuInfo Buffer"),
@@ -83,8 +62,8 @@ impl State {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
 
-        let mut init_particle = vec![0.0f32; (particles.len() * 12) as usize];
-        let mut i = 0;
+        let mut init_particle: Vec<f32> = vec![0.0f32; (particles.len() * 12) as usize];
+        let mut i: usize = 0;
         for chunk in init_particle.chunks_mut(12) {
             chunk[0] = particles[i].pos[0];
             chunk[1] = particles[i].pos[1];
@@ -94,19 +73,13 @@ impl State {
             chunk[5] = particles[i].vel[1];
             chunk[6] = particles[i].vel[2];
             chunk[7] = particles[i]._pad2;
-            let mass_arr: [f32; 2] = bytemuck::cast_slice(&[particles[i].mass])
-                .try_into()
-                .unwrap();
-            let calib_arr: [f32; 2] = bytemuck::cast_slice(&[particles[i].calibrate])
-                .try_into()
-                .unwrap();
-            chunk[8] = mass_arr[0];
-            chunk[9] = mass_arr[1];
-            chunk[10] = calib_arr[0];
-            chunk[11] = calib_arr[1];
+            chunk[8] = particles[i].mass;
+            chunk[9] = particles[i].calibrate;
+            chunk[10] = particles[i]._pad3[0];
+            chunk[11] = particles[i]._pad3[1];
             i += 1;
         }
-        let prev = display.device.create_buffer(&wgpu::BufferDescriptor {
+        let prev: wgpu::Buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
             size: p_size,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
@@ -114,14 +87,14 @@ impl State {
             label: Some("Old Buffer"),
             mapped_at_creation: false,
         });
-        let cur_init = display
+        let cur_init: wgpu::Buffer = display
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Current Buffer Initializer"),
                 contents: bytemuck::cast_slice(&init_particle),
                 usage: wgpu::BufferUsages::COPY_SRC,
             });
-        let cur = display.device.create_buffer(&wgpu::BufferDescriptor {
+        let cur: wgpu::Buffer = display.device.create_buffer(&wgpu::BufferDescriptor {
             size: p_size,
             usage: wgpu::BufferUsages::COPY_SRC
                 | wgpu::BufferUsages::COPY_DST
@@ -129,7 +102,7 @@ impl State {
             label: Some("Current Buffer"),
             mapped_at_creation: false,
         });
-        let depth_texture = display.device.create_texture(&wgpu::TextureDescriptor {
+        let depth_texture: wgpu::Texture = display.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size: wgpu::Extent3d {
                 width: display.config.width,
@@ -143,9 +116,9 @@ impl State {
             view_formats: &[],
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         });
-        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_view: wgpu::TextureView = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let bind_group_layout =
+        let bind_group_layout: wgpu::BindGroupLayout =
             display
                 .device
                 .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -189,7 +162,7 @@ impl State {
                         },
                     ],
                 });
-        let bind_group = display
+        let bind_group: wgpu::BindGroup = display
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bind Group"),
@@ -209,7 +182,7 @@ impl State {
                     },
                 ],
             });
-        let pipeline_layout =
+        let pipeline_layout: wgpu::PipelineLayout =
             display
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -218,7 +191,7 @@ impl State {
                     push_constant_ranges: &[],
                 });
 
-        let comp_pipeline =
+        let comp_pipeline: wgpu::ComputePipeline =
             display
                 .device
                 .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -227,7 +200,7 @@ impl State {
                     entry_point: "main",
                     layout: Some(&pipeline_layout),
                 });
-        let render_pipeline =
+        let render_pipeline: wgpu::RenderPipeline =
             display
                 .device
                 .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -235,7 +208,7 @@ impl State {
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: &vs_mod,
-                        entry_point: "main",
+                        entry_point: "vs_main",
                         buffers: &[],
                     },
                     fragment: Some(wgpu::FragmentState {

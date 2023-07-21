@@ -12,16 +12,16 @@ fn build_matrix(pos: Point3<f32>, dir: Vector3<f32>, aspect: f32) -> Matrix4<f32
     Matrix4::from(PerspectiveFov {
         fovy: Rad(PI / 2.0),
         aspect,
-        near: 1E8,
-        far: 1E14,
+        near: 1E-10,
+        far: 1E7,
     }) * Matrix4::look_to_rh(pos, dir, Vector3::new(0.0, 1.0, 0.0))
 }
 
 pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
     let mut state: State = State::new(gpu_info, particles).await;
-    let n = state.particles.len();
-    let p_size = (n * std::mem::size_of::<Particle>()) as u64;
-    let workgroups = (n / 256) as u32;
+    let n: usize = state.particles.len();
+    let p_size: u64 = (n * std::mem::size_of::<Particle>()) as u64;
+    let workgroups: u32 = (n / 256) as u32;
 
     let mut cam: Vector3<f32> = Vector3::new(
         -state.display.camera_pos[0],
@@ -35,12 +35,12 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
         state.display.size.width as f32 / state.display.size.height as f32,
     )
     .into();
-    let mut vel = 1E10;
-    let mut keys = HashSet::new();
-    let mut right = cam.cross(Vector3::new(0.0, 1.0, 0.0)).normalize();
-    let mut update = Instant::now();
+    let vel: f32 = 1E-9;
+    let mut keys: HashSet<event::VirtualKeyCode> = HashSet::new();
+    let mut right: Vector3<f32> = cam.cross(Vector3::new(0.0, 1.0, 0.0)).normalize();
+    let mut update: Instant = Instant::now();
     {
-        let mut encoder =
+        let mut encoder: wgpu::CommandEncoder =
             state
                 .display
                 .device
@@ -52,7 +52,7 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
 
         state.display.queue.submit([encoder.finish()]);
     }
-
+    let prev_motion: f32 = gpu_info.motion;
     state.event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
@@ -83,6 +83,10 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
                         event::VirtualKeyCode::Escape => {
                             *control_flow = ControlFlow::Exit;
                         }
+                        event::VirtualKeyCode::P => {
+                            gpu_info.motion = 0.0;
+                        }
+                        event::VirtualKeyCode::R => gpu_info.motion = prev_motion,
                         _ => {}
                     }
                     keys.insert(key);
@@ -99,23 +103,12 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
                 } => {
                     keys.remove(&key);
                 }
-                event::WindowEvent::MouseWheel { delta, .. } => {
-                    vel *= (1.0
-                        + (match delta {
-                            event::MouseScrollDelta::LineDelta(_, i) => i as f32 / 8.0,
-                            event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 64.0,
-                        }))
-                    .min(4.0)
-                    .max(0.25);
-
-                    vel = vel.min(1E13).max(1E9);
-                }
                 event::WindowEvent::Resized(resized) => {
                     state.display.size = resized;
 
                     state.display.resize(resized.width, resized.height);
 
-                    let depth_texture =
+                    let depth_texture: wgpu::Texture =
                         state
                             .display
                             .device
@@ -140,7 +133,7 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
             },
 
             event::Event::RedrawRequested(_) => {
-                let dt = update.elapsed().as_secs_f32();
+                let dt: f32 = update.elapsed().as_secs_f32();
                 update = Instant::now();
                 let surface_texture: SurfaceTexture = state
                     .display
@@ -148,10 +141,10 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
                     .get_current_texture()
                     .ok()
                     .expect("no frame texture");
-                let view = surface_texture
+                let view: wgpu::TextureView = surface_texture
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
-                let mut encoder =
+                let mut encoder: wgpu::CommandEncoder =
                     state
                         .display
                         .device
@@ -200,7 +193,7 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
                 .into();
                 state.display.camera_pos = [tmp[0], tmp[1], tmp[2]];
 
-                let new_gpu_info =
+                let new_gpu_info: wgpu::Buffer =
                     state
                         .display
                         .device
@@ -220,7 +213,7 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
 
                 for _ in 0..3 {
                     encoder.copy_buffer_to_buffer(&state.cur, 0, &state.prev, 0, p_size);
-                    let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    let mut cpass: wgpu::ComputePass<'_> = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("Compute Pass"),
                     });
                     cpass.set_pipeline(&state.comp_pipeline);
@@ -228,7 +221,7 @@ pub async fn run(mut gpu_info: GpuInfo, particles: Vec<Particle>) {
                     cpass.dispatch_workgroups(workgroups, 1, 1);
                 }
                 {
-                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    let mut rpass: wgpu::RenderPass<'_> = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("Render Pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &view,

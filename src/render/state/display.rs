@@ -14,13 +14,13 @@ pub struct Display {
 
 impl Display {
     pub async fn new(window: Window) -> Result<Self, Error> {
-        let size = window.inner_size();
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let size: winit::dpi::PhysicalSize<u32> = window.inner_size();
+        let instance: wgpu::Instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             dx12_shader_compiler: Default::default(),
         });
-        let surface = unsafe { instance.create_surface(&window) }.unwrap();
-        let adapter = instance
+        let surface: wgpu::Surface = unsafe { instance.create_surface(&window) }.unwrap();
+        let adapter: wgpu::Adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: Some(&surface),
@@ -32,7 +32,7 @@ impl Display {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH | wgpu::Features::SHADER_F64
+                    features: wgpu::Features::SPIRV_SHADER_PASSTHROUGH
                         | wgpu::Features::VERTEX_WRITABLE_STORAGE
                         | wgpu::Features::MAPPABLE_PRIMARY_BUFFERS,
                     limits: if cfg!(target_arch = "wasm32") {
@@ -45,14 +45,14 @@ impl Display {
             )
             .await
             .unwrap();
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps
+        let surface_caps: wgpu::SurfaceCapabilities = surface.get_capabilities(&adapter);
+        let surface_format: wgpu::TextureFormat = surface_caps
             .formats
             .iter()
             .copied()
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
-        let config = wgpu::SurfaceConfiguration {
+        let config: wgpu::SurfaceConfiguration = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width,
@@ -63,7 +63,7 @@ impl Display {
         };
         surface.configure(&device, &config);
 
-        let camera_pos = [0.0, 0.0, 1e10];
+        let camera_pos: [f32; 3] = [0.0, 0.0, 1e-9];
         Ok(Self {
             surface,
             window,
